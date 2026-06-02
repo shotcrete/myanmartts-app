@@ -47,25 +47,33 @@ class MainActivity : AppCompatActivity() {
                         val env = ortEnv
                         if (session != null && env != null) {
                             
-                            // စာသားကို ယူပြီး Input Tensor အဖြစ် ပြောင်းလဲခြင်း
-                            // (မှတ်ချက် - မော်ဒယ်ဖွဲ့စည်းပုံအပေါ်မူတည်၍ LongArray သို့မဟုတ် IntArray လိုအပ်နိုင်သည်)
-                            val inputSequence = LongArray(text.length) { i -> text[i].code.toLong() }
+                            // [ပြင်ဆင်ချက်] စာသားကို မော်ဒယ်နားလည်သော ID Range ထဲရောက်အောင် ဘာသာပြန်ပေးခြင်း
+                            val inputSequence = LongArray(text.length) { i -> 
+                                val code = text[i].code
+                                if (code in 4096..4255) {
+                                    // မြန်မာစာလုံးများကို မော်ဒယ်၏ range (-57 မှ 56) အတွင်းသို့ ညှိယူခြင်း
+                                    (code - 4120).toLong() 
+                                } else {
+                                    (code % 50).toLong() // တခြားသင်္ကေတ သို့မဟုတ် စာလုံးများအတွက်
+                                }
+                            }
                             val inputShape = longArrayOf(1, inputSequence.size.toLong())
                             
                             val inputTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(inputSequence), inputShape)
                             
-                            // မော်ဒယ်ရဲ့ Input Name ကို ယူခြင်း (ပုံမှန်အားဖြင့် "input" သို့မဟုတ် ပထမဆုံး key)
+                            // မော်ဒယ်ရဲ့ Input Name ကို ယူခြင်း
                             val inputName = session.inputNames.iterator().next()
                             
                             // ၃။ ပင်မ Engine ထဲ ကုဒ်ပတ်ပြီး အသံလှိုင်းထုတ်ယူခြင်း (Inference)
                             val results = session.run(Collections.singletonMap(inputName, inputTensor))
                             val outputTensor = results.get(0) as OnnxTensor
                             
-                            // Float Array (PCM Audio အစိမ်း) အဖြစ် ထုတ်ယူခြင်း
-                            val audioFloats = outputTensor.floatBuffer.array()
+                            // [ပြင်ဆင်ချက်] Float Array (PCM Audio) ကို ပိုမိုစိတ်ချရသောနည်းလမ်းဖြင့် ဖတ်ယူခြင်း
+                            val floatBuffer = outputTensor.floatBuffer
+                            val audioFloats = FloatArray(floatBuffer.remaining())
+                            floatBuffer.get(audioFloats)
                             
-                            // ၄။ စပီကာဆီ လမ်းကြောင်းဖွင့်ပြီး အသံ အတင်းအော်ခိုင်းခြင်း (AudioTrack ဖွင့်ခြင်း)
-                            // မြန်မာ TTS Model အများစုသည် 22050Hz သို့မဟုတ် 16000Hz သုံးတတ်ကြသည်
+                            // ၄။ စပီကာဆီ လမ်းကြောင်းဖွင့်ပြီး အသံ ကစားခြင်း (AudioTrack)
                             val sampleRate = 22050 
                             val bufferSize = AudioTrack.getMinBufferSize(
                                 sampleRate,
@@ -100,6 +108,14 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, "စာသား အရင်ရိုက်ပေးပါ", Toast.LENGTH_SHORT).show()
             }
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        ortSession?.close()
+        ortEnv?.close()
+    }
+}
     }
 
     override fun onDestroy() {

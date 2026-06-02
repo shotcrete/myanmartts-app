@@ -81,46 +81,33 @@ class MainActivity : AppCompatActivity() {
 
                 thread(start = true) {
                     try {
-                        // vocabMap ထဲက ID အစစ်အမှန်များကို ကွက်တိပြောင်းလဲခြင်း (မရှိပါက ၅၇ ဟုသတ်မှတ်)
+                        // စာသားကို ID အဖြစ်ပြောင်းလဲခြင်း
                         val inputSequence = LongArray(text.length) { i ->
                             vocabMap[text[i]] ?: 57L
                         }
                         val inputShape = longArrayOf(1, inputSequence.size.toLong())
 
-                        // Input Tensors ပြင်ဆင်ခြင်း
+                        // Base Tensors များ တည်ဆောက်ခြင်း
                         val inputTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(inputSequence), inputShape)
-                        
+                        val lengthTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(inputSequence.size.toLong())), longArrayOf(1))
                         val maskSequence = LongArray(text.length) { 1L }
                         val maskTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(maskSequence), inputShape)
-                        
-                        val speakerSequence = longArrayOf(0L)
-                        val speakerShape = longArrayOf(1)
-                        val speakerTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(speakerSequence), speakerShape)
+                        val speakerTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(0L)), longArrayOf(1))
 
-                        // မော်ဒယ်မှ တောင်းဆိုသော အမည်များအတိုင်း ကွက်တိထည့်သွင်းခြင်း
+                        // မော်ဒယ်အစစ်အမှန်က တောင်းဆိုထားသော နာမည်များကိုသာ ကွက်တိစစ်ထုတ်ပြီး ထည့်ပေးခြင်း
                         val inputMap = HashMap<String, OnnxTensor>()
-                        inputMap["input"] = inputTensor
-                        inputMap["input_lengths"] = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(inputSequence.size.toLong())), longArrayOf(1))
-                        inputMap["attention_mask"] = maskTensor
-                        inputMap["speaker_id"] = speakerTensor
-                        inputMap["sid"] = speakerTensor
+                        val expectedInputNames = session.inputNames
 
-                        // VITS Model တောင်းဆိုတတ်သော default input name အားလုံးကို map အုပ်ပေးခြင်း
-                        val inputNames = session.inputNames
-                        for (name in inputNames) {
-                            if (!inputMap.containsKey(name)) {
-                                when {
-                                    name.contains("input_lengths") || name.contains("scales") -> {
-                                        // scale configuration အတွက် float array သို့မဟုတ် long array အစားထိုးခြင်း
-                                    }
-                                    name.contains("input") -> inputMap[name] = inputTensor
-                                    name.contains("mask") -> inputMap[name] = maskTensor
-                                    name.contains("speaker") || name.contains("sid") -> inputMap[name] = speakerTensor
-                                }
+                        for (name in expectedInputNames) {
+                            when {
+                                name.contains("input_lengths") -> inputMap[name] = lengthTensor
+                                name == "input" || name.contains("input_ids") -> inputMap[name] = inputTensor
+                                name.contains("attention_mask") || name.contains("mask") -> inputMap[name] = maskTensor
+                                name.contains("speaker_id") || name.contains("sid") -> inputMap[name] = speakerTensor
                             }
                         }
 
-                        // စက်ရုပ်ထဲ ကုဒ်ပတ်ခြင်း
+                        // မော်ဒယ်ထဲ ကုဒ်ပတ်ခြင်း (Inference)
                         val results = session.run(inputMap)
                         val outputTensor = results.get(0) as OnnxTensor
                         
@@ -128,7 +115,7 @@ class MainActivity : AppCompatActivity() {
                         val audioFloats = FloatArray(floatBuffer.remaining())
                         floatBuffer.get(audioFloats)
                         
-                        // မော်ဒယ်ရဲ့ config.json အရ sampling_rate ကို 16000 သို့ ပြောင်းလဲခြင်း
+                        // config.json အရ sampling_rate = 16000Hz
                         val sampleRate = 16000 
                         val bufferSize = AudioTrack.getMinBufferSize(
                             sampleRate,
@@ -148,15 +135,16 @@ class MainActivity : AppCompatActivity() {
                         audioTrack.play()
                         audioTrack.write(audioFloats, 0, audioFloats.size, AudioTrack.WRITE_BLOCKING)
                         
-                        // Tensor များ ပိတ်သိမ်းခြင်း
+                        // Tensor များ ပြန်ပိတ်ခြင်း
                         inputTensor.close()
+                        lengthTensor.close()
                         maskTensor.close()
                         speakerTensor.close()
                         results.close()
 
                     } catch (e: Exception) {
                         runOnUiThread {
-                            Toast.makeText(this@MainActivity, "အသံထုတ်လုပ်မှု အမှားတက်သွားပါသည်: ${e.message}", Toast.LENGTH_LONG).show()
+                            Toast.makeText(this@MainActivity, "အမှားတက်သွားပါသည်: ${e.message}", Toast.LENGTH_LONG).show()
                         }
                     }
                 }

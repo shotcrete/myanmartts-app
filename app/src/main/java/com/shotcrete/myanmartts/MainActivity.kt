@@ -81,9 +81,9 @@ class MainActivity : AppCompatActivity() {
 
                 thread(start = true) {
                     try {
-                        // စာသားကို ID အဖြစ်ပြောင်းလဲခြင်း
+                        // vocabMap ထဲမပါသော စာလုံးတွေ့ပါက index အလွန်မဖြစ်စေရန် space (56L) သို့ ပြောင်းလဲပစ်ခြင်း
                         val inputSequence = LongArray(text.length) { i ->
-                            vocabMap[text[i]] ?: 57L
+                            vocabMap[text[i]] ?: 56L
                         }
                         val inputShape = longArrayOf(1, inputSequence.size.toLong())
 
@@ -94,7 +94,7 @@ class MainActivity : AppCompatActivity() {
                         val maskTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(maskSequence), inputShape)
                         val speakerTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(0L)), longArrayOf(1))
 
-                        // မော်ဒယ်အစစ်အမှန်က တောင်းဆိုထားသော နာမည်များကိုသာ ကွက်တိစစ်ထုတ်ပြီး ထည့်ပေးခြင်း
+                        // မော်ဒယ်အစစ်အမှန်က တောင်းဆိုထားသော နာမည်များကိုသာ စစ်ထုတ်ပြီး ကွက်တိထည့်ပေးခြင်း
                         val inputMap = HashMap<String, OnnxTensor>()
                         val expectedInputNames = session.inputNames
 

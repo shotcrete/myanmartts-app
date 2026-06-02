@@ -10,32 +10,24 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
-      with:
-        lfs: true
+    - name: Checkout Repository
+      uses: actions/checkout@v4
 
-    - name: set up JDK 17
+    - name: Set up JDK 17
       uses: actions/setup-java@v4
       with:
         java-version: '17'
         distribution: 'temurin'
         cache: gradle
 
-    - name: Grant execute permission for gradlew
+    - name: Grant Execute Permission for Gradlew
       run: chmod +x gradlew
-      continue-on-error: true
 
     - name: Build with Gradle
-      run: |
-        if [ ! -f gradlew ]; then
-          gradle init --type basic --gradle-version 8.5 --yes
-        fi
-        # Android build ဖန်တီးရန် စတင်ခြင်း
-        echo "Building APK..."
+      run: ./gradlew assembleDebug
 
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:
         name: myanmartts-app-debug
-        path: app/build/outputs/apk/debug/*.apk
-        if-no-files-found: ignore
+        path: app/build/outputs/apk/debug/app-debug.apk

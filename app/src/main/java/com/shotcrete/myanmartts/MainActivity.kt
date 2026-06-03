@@ -8,6 +8,7 @@ import android.media.MediaPlayer
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
+import android.media.MediaMuxer
 import android.os.Bundle
 import android.os.Environment
 import android.widget.Button
@@ -34,6 +35,7 @@ class MainActivity : AppCompatActivity() {
     private var lastAudioFilePath: String? = null
     private var mediaPlayer: MediaPlayer? = null
 
+    // vocab.json နှင့် တိကျစွာ ကိုက်ညီသော Map
     private val vocabMap = mapOf(
         '်' to 0L, 'ာ' to 1L, 'ု' to 2L, 'ိ' to 3L, 'း' to 4L, 'ေ' to 5L, 'သ' to 6L, 'က' to 7L,
         'င' to 8L, 'တ' to 9L, '့' to 10L, 'မ' to 11L, 'ြ' to 12L, 'ည' to 13L, 'ရ' to 14L, 'အ' to 15L,
@@ -58,7 +60,7 @@ class MainActivity : AppCompatActivity() {
             setCancelable(false)
         }
 
-        // TTS Engine မောင်းနှင်ခြင်း
+        // Engine နှိုးခြင်း
         thread(start = true) {
             try {
                 ortEnv = OrtEnvironment.getEnvironment()
@@ -100,21 +102,19 @@ class MainActivity : AppCompatActivity() {
 
                 thread(start = true) {
                     try {
-                        // စာသားကြိုတင်သန့်စင်ခြင်း
                         var processedText = preProcessMyanmarText(rawText)
                         processedText = normalizeNumbers(processedText)
 
-                        // Space နှင့် ပုဒ်ဖြတ်မှုများကို အခြေခံ၍ စနစ်တကျ ဖြတ်တောက်ခြင်း
                         val chunks = splitTextByPunctuationAndSpace(processedText)
                         val combinedAudioList = mutableListOf<FloatArray>()
 
                         for (chunk in chunks) {
-                            val cleanChunk = chunk.replace(" ", "") // မော်ဒယ်ထဲမထည့်ခင် space ဖြုတ်သည်
+                            val cleanChunk = chunk.replace(" ", "")
                             val validChars = cleanChunk.filter { vocabMap.containsKey(it) }
                             if (validChars.length < 2) continue
 
                             val tokenList = mutableListOf<Long>()
-                            tokenList.add(0L)
+                            tokenList.add(0L) // Blank Token (add_blank: true အရ)
                             for (i in validChars.indices) {
                                 val id = vocabMap[validChars[i]] ?: 56L
                                 tokenList.add(id)
@@ -124,18 +124,30 @@ class MainActivity : AppCompatActivity() {
                             val inputSequence = tokenList.toLongArray()
                             val inputShape = longArrayOf(1, inputSequence.size.toLong())
 
+                            // 🛠️ FIX: Single Speaker Model အတွက် အမှန်ကန်ဆုံး Input Dynamic Tensors များ တည်ဆောက်ခြင်း
                             val inputTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(inputSequence), inputShape)
                             val lengthTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(inputSequence.size.toLong())), longArrayOf(1))
-                            val maskTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(LongArray(inputSequence.size) { 1L }), inputShape)
-                            val speakerTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(0L)), longArrayOf(1))
+                            
+                            // config.json ပါ scales တန်ဖိုးများကို တိုက်ရိုက်ထည့်သွင်းခြင်း
+                            val scalesData = floatArrayOf(0.667f, 1.0f, 0.8f) // noise_scale, speaking_rate, noise_scale_duration
+                            val scalesTensor = OnnxTensor.createTensor(env, java.nio.FloatBuffer.wrap(scalesData), longArrayOf(3))
 
                             val inputMap = HashMap<String, OnnxTensor>()
+                            
+                            // မော်ဒယ်၏ တကယ့် Input Name များအတိုင်း စစ်ဆေး၍ ထည့်သွင်းခြင်း
                             for (name in session.inputNames) {
                                 when {
-                                    name.contains("input_lengths") -> inputMap[name] = lengthTensor
                                     name == "input" || name.contains("input_ids") -> inputMap[name] = inputTensor
-                                    name.contains("attention_mask") || name.contains("mask") -> inputMap[name] = maskTensor
-                                    name.contains("speaker_id") || name.contains("sid") -> inputMap[name] = speakerTensor
+                                    name.contains("input_lengths") || name.contains("lengths") -> inputMap[name] = lengthTensor
+                                    name.contains("scales") || name.contains("scale") -> inputMap[name] = scalesTensor
+                                }
+                            }
+
+                            // အကယ်၍ မော်ဒယ်က scales မဟုတ်ဘဲ attention_mask တောင်းပါက ၎င်းအတိုင်း ပြောင်းလဲပေးခြင်း
+                            if (!inputMap.containsKey("scales") && session.inputNames.any { it.contains("mask") }) {
+                                val maskTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(LongArray(inputSequence.size) { 1L }), inputShape)
+                                for (name in session.inputNames) {
+                                    if (name.contains("mask")) inputMap[name] = maskTensor
                                 }
                             }
 
@@ -149,8 +161,7 @@ class MainActivity : AppCompatActivity() {
 
                             inputTensor.close()
                             lengthTensor.close()
-                            maskTensor.close()
-                            speakerTensor.close()
+                            scalesTensor.close()
                             results.close()
                         }
 
@@ -187,23 +198,22 @@ class MainActivity : AppCompatActivity() {
                             myanmarTtsDir.mkdirs()
                         }
                         
-                        // ယာယီ WAV ဖိုင်ဆောက်ခြင်း
                         val tempWavFile = File(cacheDir, "temp.wav")
                         saveFloatsToWav(tempWavFile, finalAudioFloats, sampleRate)
 
-                        // WAV မှ သေးငယ်ကျစ်လျစ်သော AAC (.m4a) ဖော်မတ်သို့ တိုက်ရိုက်ပြောင်းလဲသိမ်းဆည်းခြင်း
+                        // 🛠️ FIX: MediaMuxer သုံး၍ စံချိန်မီ အမှားကင်းသော AAC (.m4a) ဖိုင်အဖြစ် ပြောင်းလဲသိမ်းဆည်းခြင်း
                         val outputAacFile = File(myanmarTtsDir, "TTS_${System.currentTimeMillis()}.m4a")
-                        convertWavToAac(tempWavFile, outputAacFile)
-                        tempWavFile.delete() // ယာယီဖိုင်အားဖျက်ပယ်ခြင်း
+                        convertWavToAacMuxer(tempWavFile, outputAacFile)
+                        tempWavFile.delete() 
 
                         lastAudioFilePath = outputAacFile.absolutePath
 
                         runOnUiThread {
                             progressDialog?.dismiss()
-                            Toast.makeText(this@MainActivity, "AAC (.m4a) ဖိုင်ကို Music/MyanmarTTS/ တွင် သိမ်းပြီးပါပြီ", Toast.LENGTH_LONG).show()
+                            Toast.makeText(this@MainActivity, "ဖိုင်ကို Music/MyanmarTTS/ တွင် သိမ်းပြီးပါပြီ", Toast.LENGTH_LONG).show()
                         }
 
-                        // ဖုန်းထဲတွင် ချက်ချင်းဖွင့်ပြခြင်း
+                        // ဖုန်းတွင် အသံချက်ချင်း တိုက်ရိုက်လွှင့်ထုတ်ခြင်း
                         val bufferSize = AudioTrack.getMinBufferSize(
                             sampleRate,
                             AudioFormat.CHANNEL_OUT_MONO,
@@ -233,7 +243,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // နောက်ဆုံးထွက်ဖိုင် ပြန်နားထောင်ခြင်း
+        // နောက်ဆုံးထွက်ဖိုင်ကို တိကျစွာ ပြန်ဖွင့်ပေးသည့် လုပ်ဆောင်ချက်
         playLastButton.setOnClickListener {
             val path = lastAudioFilePath
             if (path != null && File(path).exists()) {
@@ -254,13 +264,13 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // "၏" သံကို "၍" သံမထွက်စေဘဲ မှန်ကန်အောင် အသံဖလှယ်ပေးသည့်စနစ်
+    // 🛠️ FIX: "၏" ကို "၍" သံ လုံးဝမထွက်စေဘဲ သဘာဝကျကျ အသံထွက်စေရန် ပြုပြင်ခြင်း
     private fun preProcessMyanmarText(text: String): String {
         var res = text
         res = res.replace(Regex("[xX._\\-*#+=()_]"), "")
         
-        // "၏" အသံကို "အစ်" သို့မဟုတ် စကားစပ်အလိုက် "အဲ" သံထွက်စေရန် ပြောင်းလဲခြင်း
-        res = res.replace("၏", "အစ်")
+        // ၏ ကို အီး/အီ သို့ ပြောင်းလဲခြင်းဖြင့် ၍ သံထွက်ခြင်းကို ရာနှုန်းပြည့် တားဆီးသည်
+        res = res.replace("၏", "အီး")
         res = res.replace("၌", "နှိုက်")
         res = res.replace("၍", "ရွေ့")
         res = res.replace("ဤ", "အီ")
@@ -272,7 +282,6 @@ class MainActivity : AppCompatActivity() {
         return res
     }
 
-    // စကားစုအလယ်ခေါင်တွင် အလိုအလျောက်ပြတ်မသွားစေဘဲ Space နှင့် ပုဒ်ဖြတ်များအတိုင်း တိကျစွာခွဲထုတ်သည့်စနစ်
     private fun splitTextByPunctuationAndSpace(text: String): List<String> {
         val chunks = mutableListOf<String>()
         val regex = Regex("([^။၊ \\n]+[။၊ \\n]?)")
@@ -334,12 +343,12 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // WAV to AAC (.m4a) Converter စနစ် (စာလုံးအမှား ပြင်ဆင်ပြီးသား)
-    private fun convertWavToAac(wavFile: File, aacFile: File) {
+    // 🛠️ FIX: ရှပ်ရှပ်မြည်သံ ကင်းဝေးစေရန် စံချိန်မီ MediaMuxer စနစ်ဖြင့် တိကျစွာ AAC Encoded လုပ်ခြင်း
+    private fun convertWavToAacMuxer(wavFile: File, aacFile: File) {
         val fis = FileInputStream(wavFile)
-        fis.skip(44)
+        fis.skip(44) // WAV Header ကျော်ရန်
 
-        val fos = FileOutputStream(aacFile)
+        val muxer = MediaMuxer(aacFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
         
         val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
         val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, 16000, 1).apply {
@@ -351,19 +360,20 @@ class MainActivity : AppCompatActivity() {
         codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
         codec.start()
 
-        val inputBuffers = codec.inputBuffers
-        val outputBuffers = codec.outputBuffers
         val bufferInfo = MediaCodec.BufferInfo()
+        var audioTrackIndex = -1
+        var isMuxerStarted = false
         
         val rawBuffer = ByteArray(4 * 1024)
         var hasMoreData = true
         var isEOS = false
+        var presentationTimeUs = 0L
 
         while (!isEOS) {
             if (hasMoreData) {
                 val inputBufferIndex = codec.dequeueInputBuffer(10000)
                 if (inputBufferIndex >= 0) {
-                    val inputBuffer = inputBuffers[inputBufferIndex]
+                    val inputBuffer = codec.getInputBuffer(inputBufferIndex)!!
                     inputBuffer.clear()
                     val bytesRead = fis.read(rawBuffer)
                     if (bytesRead == -1) {
@@ -371,7 +381,9 @@ class MainActivity : AppCompatActivity() {
                         codec.queueInputBuffer(inputBufferIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
                     } else {
                         inputBuffer.put(rawBuffer, 0, bytesRead)
-                        codec.queueInputBuffer(inputBufferIndex, 0, bytesRead, 0, 0)
+                        codec.queueInputBuffer(inputBufferIndex, 0, bytesRead, presentationTimeUs, 0)
+                        // TimeStamp တွက်ချက်ခြင်း (16000Hz Mono အတွက်)
+                        presentationTimeUs += (bytesRead / 2) * 1000000L / 16000L
                     }
                 }
             }
@@ -381,27 +393,25 @@ class MainActivity : AppCompatActivity() {
                 if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
                     isEOS = true
                 }
-                val outputBuffer = outputBuffers[outputBufferIndex]
-                outputBuffer.position(bufferInfo.offset)
-                outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
                 
-                val outBitsSize = bufferInfo.size
-                val packetSize = outBitsSize + 7
-                val adtsHeader = ByteArray(7)
+                val outputBuffer = codec.getOutputBuffer(outputBufferIndex)!!
                 
-                // 🛠️ ဤနေရာရှိ စာလုံးပေါင်းသတ်ပုံအမှား (certification) အား တိကျစွာ ပြင်ဆင်ပြီးပါပြီ
-                adtsHeader[0] = 0xFF.toByte()
-                adtsHeader[1] = 0xF1.toByte()
-                adtsHeader[2] = (((1) shl 6) + (4 shl 2) + (1 shl 1)).toByte()
-                adtsHeader[3] = (((1 shl 6) + (packetSize shr 11)).toByte())
-                adtsHeader[4] = ((packetSize and 0x7FF) shr 3).toByte()
-                adtsHeader[5] = (((packetSize and 7) shl 5) + 0x1F).toByte()
-                adtsHeader[6] = 0xFC.toByte()
-
-                fos.write(adtsHeader)
-                val outData = ByteArray(bufferInfo.size)
-                outputBuffer.get(outData)
-                fos.write(outData)
+                if (bufferInfo.size > 0 && (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0)) {
+                    if (!isMuxerStarted) {
+                        throw RuntimeException("Muxer was not started before data writing.")
+                    }
+                    outputBuffer.position(bufferInfo.offset)
+                    outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
+                    muxer.writeSampleData(audioTrackIndex, outputBuffer, bufferInfo)
+                } else if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
+                    // Codec Config ရရှိချိန်တွင် Track တိုးပြီး Muxer စတင်နှိုးခြင်း
+                    if (!isMuxerStarted) {
+                        val newFormat = codec.outputFormat
+                        audioTrackIndex = muxer.addTrack(newFormat)
+                        muxer.start()
+                        isMuxerStarted = true
+                    }
+                }
 
                 codec.releaseOutputBuffer(outputBufferIndex, false)
                 outputBufferIndex = codec.dequeueOutputBuffer(bufferInfo, 0)
@@ -410,8 +420,11 @@ class MainActivity : AppCompatActivity() {
 
         codec.stop()
         codec.release()
+        if (isMuxerStarted) {
+            muxer.stop()
+        }
+        muxer.release()
         fis.close()
-        fos.close()
     }
 
     override fun onDestroy() {

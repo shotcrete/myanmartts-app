@@ -4,6 +4,7 @@ import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
 import android.os.Bundle
+import android.os.Environment
 import android.widget.Button
 import android.widget.EditText
 import android.widget.Toast
@@ -13,16 +14,16 @@ import ai.onnxruntime.OrtSession
 import ai.onnxruntime.OnnxTensor
 import java.io.File
 import java.io.FileOutputStream
+import java.io.RandomAccessFile
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.HashMap
 import kotlin.concurrent.thread
-import kotlin.math.max
-import kotlin.math.min
 
 class MainActivity : AppCompatActivity() {
     private var ortEnv: OrtEnvironment? = null
     private var ortSession: OrtSession? = null
 
-    // vocab.json အတိုင်း ကွက်တိသတ်မှတ်ထားသော ID များ
     private val vocabMap = mapOf(
         '်' to 0L, 'ာ' to 1L, 'ု' to 2L, 'ိ' to 3L, 'း' to 4L, 'ေ' to 5L, 'သ' to 6L, 'က' to 7L,
         'င' to 8L, 'တ' to 9L, '့' to 10L, 'မ' to 11L, 'ြ' to 12L, 'ည' to 13L, 'ရ' to 14L, 'အ' to 15L,
@@ -41,7 +42,6 @@ class MainActivity : AppCompatActivity() {
         val inputText = findViewById<EditText>(R.id.inputText)
         val speakButton = findViewById<Button>(R.id.speakButton)
 
-        // ၁။ ONNX Core Engine အား နောက်ကွယ်မှ နှိုးခြင်း
         thread(start = true) {
             try {
                 ortEnv = OrtEnvironment.getEnvironment()
@@ -64,14 +64,14 @@ class MainActivity : AppCompatActivity() {
                 }
             } catch (e: Exception) {
                 runOnUiThread {
-                    Toast.makeText(this@MainActivity, "Engine ဖွင့်ရတာ မအောင်မြင်ပါ: ${e.message}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this@MainActivity, "Engine ပွင့်ရန် အမှားတက်သွားပါသည်: ${e.message}", Toast.LENGTH_LONG).show()
                 }
             }
         }
 
         speakButton.setOnClickListener {
-            val text = inputText.text.toString().trim()
-            if (text.isNotEmpty()) {
+            val rawText = inputText.text.toString().trim()
+            if (rawText.isNotEmpty()) {
                 val session = ortSession
                 val env = ortEnv
                 if (session == null || env == null) {
@@ -83,75 +83,95 @@ class MainActivity : AppCompatActivity() {
 
                 thread(start = true) {
                     try {
-                        // Python သတ်မှတ်ချက်အတိုင်း Space ဖယ်ထုတ်ခြင်း
-                        val cleanText = text.replace(" ", "")
-                        
-                        // ၂။ Hugging Face တရားဝင် VitsTokenizer အလုပ်လုပ်ပုံအတိုင်း Interspersed Pad (0L) စနစ်တည်ဆောက်ခြင်း
-                        // စာလုံးတစ်လုံးစီ၏ ကြားထဲတွင် Pad Token (0L) ကို ညှပ်ထည့်ပေးရပါသည်
-                        val tokenList = mutableListOf<Long>()
-                        tokenList.add(0L) // ရှေ့ဆုံး Pad
-                        for (i in cleanText.indices) {
-                            val id = vocabMap[cleanText[i]] ?: 56L // မတွေ့ပါက space id ပေးမည်
-                            tokenList.add(id)
-                            tokenList.add(0L) // ကြား/နောက် Pad
-                        }
+                        var normalizedText = normalizeNumbers(rawText)
+                        normalizedText = normalizedText.replace(" ", "")
 
-                        val inputSequence = tokenList.toLongArray()
-                        val inputShape = longArrayOf(1, inputSequence.size.toLong())
+                        val chunks = splitTextIntoChunks(normalizedText)
+                        val combinedAudioList = mutableListOf<FloatArray>()
 
-                        // Tensors များ အသင့်ပြင်ဆင်ခြင်း
-                        val inputTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(inputSequence), inputShape)
-                        val lengthTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(inputSequence.size.toLong())), longArrayOf(1))
-                        
-                        val maskSequence = LongArray(inputSequence.size) { 1L }
-                        val maskTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(maskSequence), inputShape)
-                        val speakerTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(0L)), longArrayOf(1))
+                        for (chunk in chunks) {
+                            if (chunk.length < 2) continue
 
-                        // မော်ဒယ်လိုအပ်ချက်များကို Dynamic စစ်ထုတ်ထည့်သွင်းခြင်း
-                        val inputMap = HashMap<String, OnnxTensor>()
-                        val expectedInputNames = session.inputNames
-
-                        for (name in expectedInputNames) {
-                            when {
-                                name.contains("input_lengths") -> inputMap[name] = lengthTensor
-                                name == "input" || name.contains("input_ids") -> inputMap[name] = inputTensor
-                                name.contains("attention_mask") || name.contains("mask") -> inputMap[name] = maskTensor
-                                name.contains("speaker_id") || name.contains("sid") -> inputMap[name] = speakerTensor
+                            val tokenList = mutableListOf<Long>()
+                            tokenList.add(0L)
+                            for (i in chunk.indices) {
+                                val id = vocabMap[chunk[i]] ?: 56L
+                                tokenList.add(id)
+                                tokenList.add(0L)
                             }
+
+                            val inputSequence = tokenList.toLongArray()
+                            val inputShape = longArrayOf(1, inputSequence.size.toLong())
+
+                            val inputTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(inputSequence), inputShape)
+                            val lengthTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(inputSequence.size.toLong())), longArrayOf(1))
+                            val maskTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(LongArray(inputSequence.size) { 1L }), inputShape)
+                            val speakerTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(0L)), longArrayOf(1))
+
+                            val inputMap = HashMap<String, OnnxTensor>()
+                            for (name in session.inputNames) {
+                                when {
+                                    name.contains("input_lengths") -> inputMap[name] = lengthTensor
+                                    name == "input" || name.contains("input_ids") -> inputMap[name] = inputTensor
+                                    name.contains("attention_mask") || name.contains("mask") -> inputMap[name] = maskTensor
+                                    name.contains("speaker_id") || name.contains("sid") -> inputMap[name] = speakerTensor
+                                }
+                            }
+
+                            val results = session.run(inputMap)
+                            val outputTensor = results.get(0) as OnnxTensor
+                            val floatBuffer = outputTensor.floatBuffer
+                            val audioFloats = FloatArray(floatBuffer.remaining())
+                            floatBuffer.get(audioFloats)
+
+                            combinedAudioList.add(audioFloats)
+
+                            inputTensor.close()
+                            lengthTensor.close()
+                            maskTensor.close()
+                            speakerTensor.close()
+                            results.close()
                         }
 
-                        // ၃။ Model Inference မောင်းနှင်ခြင်း
-                        val results = session.run(inputMap)
-                        val outputTensor = results.get(0) as OnnxTensor
-                        
-                        val floatBuffer = outputTensor.floatBuffer
-                        val audioFloats = FloatArray(floatBuffer.remaining())
-                        floatBuffer.get(audioFloats)
+                        if (combinedAudioList.isEmpty()) return@thread
+                        val totalLength = combinedAudioList.sumOf { it.size }
+                        val finalAudioFloats = FloatArray(totalLength)
+                        var destPos = 0
+                        for (audioChunk in combinedAudioList) {
+                            System.arraycopy(audioChunk, 0, finalAudioFloats, destPos, audioChunk.size)
+                            destPos += audioChunk.size
+                        }
 
-                        // ၄။ အသံတိုးခြင်းနှင့် အရှိန်လွန်မြန်ခြင်းတို့အား ဒေတာပြုပြင်ထိန်းချုပ်မှုဖြင့် ကုစားခြင်း
-                        // Float Waveform အား စံချိန်ကိုက် အသံမြှင့်တင်ပေးခြင်း (Volume Normalization)
+                        // Volume Normalization
                         var maxVal = 0.0f
-                        for (f in audioFloats) {
+                        for (f in finalAudioFloats) {
                             val absF = if (f < 0) -f else f
                             if (absF > maxVal) maxVal = absF
                         }
-                        
-                        // အသံတိုးလွန်းခြင်းမှ ကာကွယ်ရန် သင့်တော်သော Gain နှုန်းဖြင့် မြှင့်တင်ခြင်း
                         if (maxVal > 0) {
-                            val gain = 0.8f / maxVal
-                            for (i in audioFloats.indices) {
-                                audioFloats[i] = audioFloats[i] * gain
+                            val gain = 0.9f / maxVal
+                            for (i in finalAudioFloats.indices) {
+                                finalAudioFloats[i] = finalAudioFloats[i] * gain
                             }
                         }
 
-                        // ၅။ ၁၆၀၀၀ Hz စနစ်ဖြင့် အသံလွှင့်ထုတ်ခြင်း
-                        val sampleRate = 16000 
+                        // 🛠️ ၁။ WAV ဖိုင်အဖြစ် ဖုန်းထဲသို့ အပြီးအပိုင်သိမ်းဆည်းခြင်း လုပ်ငန်းစဉ်
+                        val sampleRate = 16000
+                        val exportDir = getExternalFilesDir(Environment.DIRECTORY_MUSIC)
+                        val outputFile = File(exportDir, "Myanmar_TTS_${System.currentTimeMillis()}.wav")
+                        
+                        saveFloatsToWav(outputFile, finalAudioFloats, sampleRate)
+
+                        runOnUiThread {
+                            Toast.makeText(this@MainActivity, "ဖိုင်သိမ်းပြီးပါပြီ- ${outputFile.name}", Toast.LENGTH_LONG).show()
+                        }
+
+                        // ြ။ သိမ်းပြီးသား ဖိုင်ကို AudioTrack ဖြင့် ချက်ချင်းပြန်ဖွင့်ပြခြင်း
                         val bufferSize = AudioTrack.getMinBufferSize(
                             sampleRate,
                             AudioFormat.CHANNEL_OUT_MONO,
                             AudioFormat.ENCODING_PCM_FLOAT
                         )
-                        
                         val audioTrack = AudioTrack(
                             AudioManager.STREAM_MUSIC,
                             sampleRate,
@@ -160,16 +180,9 @@ class MainActivity : AppCompatActivity() {
                             bufferSize,
                             AudioTrack.MODE_STREAM
                         )
-                        
+
                         audioTrack.play()
-                        audioTrack.write(audioFloats, 0, audioFloats.size, AudioTrack.WRITE_BLOCKING)
-                        
-                        // ပိတ်သိမ်းခြင်း
-                        inputTensor.close()
-                        lengthTensor.close()
-                        maskTensor.close()
-                        speakerTensor.close()
-                        results.close()
+                        audioTrack.write(finalAudioFloats, 0, finalAudioFloats.size, AudioTrack.WRITE_BLOCKING)
 
                     } catch (e: Exception) {
                         runOnUiThread {
@@ -180,6 +193,75 @@ class MainActivity : AppCompatActivity() {
             } else {
                 Toast.makeText(this, "စာသား အရင်ရိုက်ပေးပါ", Toast.LENGTH_SHORT).show()
             }
+        }
+    }
+
+    private fun splitTextIntoChunks(text: String): List<String> {
+        val chunks = mutableListOf<String>()
+        val regex = Regex("([^။၊\\n]+[။၊\\n]?)")
+        val matches = regex.findAll(text)
+        
+        var currentChunk = ""
+        for (match in matches) {
+            val segment = match.value
+            if (currentChunk.length + segment.length > 40) {
+                if (currentChunk.isNotEmpty()) chunks.add(currentChunk)
+                currentChunk = segment
+            } else {
+                currentChunk += segment
+            }
+        }
+        if (currentChunk.isNotEmpty()) chunks.add(currentChunk)
+        return if (chunks.isEmpty()) listOf(text) else chunks
+    }
+
+    private fun normalizeNumbers(text: String): String {
+        var res = text
+        val numMap = mapOf(
+            "0" to "သုည", "1" to "တစ်", "2" to "နှစ်", "3" to "သုံး", "4" to "လေး", "5" to "ငါး",
+            "6" to "ခြောက်", "7" to "ခုနစ်", "8" to "ရှစ်", "9" to "ကိုး",
+            "၀" to "သုည", "၁" to "တစ်", "၂" to "နှစ်", "၃" to "သုံး", "၄" to "လေး", "၅" to "ငါး",
+            "၆" to "ခြောက်", "၇" to "ခုနစ်", "၈" to "ရှစ်", "၉" to "ကိုး"
+        )
+        for ((num, txt) in numMap) {
+            res = res.replace(num, txt)
+        }
+        return res
+    }
+
+    // 🛠️ WAV File Standard Header ရေးသားပြီး ဖိုင်ထုတ်ပေးသည့် Helper Function
+    private fun saveFloatsToWav(file: File, floatData: FloatArray, sampleRate: Int) {
+        val payloadSize = floatData.size * 4 // Float ဖြစ်၍ 1 Sample လျှင် 4 Bytes ရှိပါသည်
+        val totalSize = payloadSize + 36
+
+        RandomAccessFile(file, "rw").use { raf ->
+            raf.setLength(0) // ဖိုင်ဟောင်းရှိက အစကပြန်ဖျက်ရန်
+
+            // RIFF Header
+            raf.writeBytes("RIFF")
+            raf.writeInt(Integer.reverseBytes(totalSize))
+            raf.writeBytes("WAVE")
+
+            // Sub-chunk 1 (fmt )
+            raf.writeBytes("fmt ")
+            raf.writeInt(Integer.reverseBytes(16)) // Subchunk1Size (16 for PCM)
+            raf.writeShort(java.lang.Short.reverseBytes(3)) // AudioFormat (3 for IEEE Float)
+            raf.writeShort(java.lang.Short.reverseBytes(1)) // NumChannels (Mono = 1)
+            raf.writeInt(Integer.reverseBytes(sampleRate)) // SampleRate
+            raf.writeInt(Integer.reverseBytes(sampleRate * 4)) // ByteRate (SampleRate * Channel * 4)
+            raf.writeShort(java.lang.Short.reverseBytes(4)) // BlockAlign (Channel * 4)
+            raf.writeShort(java.lang.Short.reverseBytes(32)) // BitsPerSample (32 bits)
+
+            // Sub-chunk 2 (data)
+            raf.writeBytes("data")
+            raf.writeInt(Integer.reverseBytes(payloadSize))
+
+            // Byte Buffer သုံးပြီး Float ဒေတာများကို Little Endian စနစ်ဖြင့် ဖိုင်ထဲသို့ ထည့်သွင်းခြင်း
+            val byteBuffer = ByteBuffer.allocate(payloadSize).order(ByteOrder.LITTLE_ENDIAN)
+            for (f in floatData) {
+                byteBuffer.putFloat(f)
+            }
+            raf.write(byteBuffer.array())
         }
     }
 

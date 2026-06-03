@@ -257,9 +257,10 @@ class MainActivity : AppCompatActivity() {
         var res = text
         res = res.replace(Regex("[xX._\\-*#+=()_]"), "")
         
-        // 🛠️ FIX: "၎င်း" ကို "လဂေါင်း" သို့ အစ်ကို့ဆန္ဒအတိုင်း ပြောင်းလဲပေးလိုက်ပါပြီ
-        res = res.replace("၎င်း", "လဂေါင်း")
+        // 🛠️ FIX: "ဪ" ကို "အော်" ဟု အစ်ကို့ညွှန်ကြားချက်အတိုင်း အလိုအလျောက် ပြောင်းလဲဖတ်စေခြင်း
+        res = res.replace("ဪ", "အော်")
         
+        res = res.replace("၎င်း", "လဂေါင်း")
         res = res.replace("ဖြစ်၏", "ဖြစ်တယ်") 
         res = res.replace("၏", "အီး")
         res = res.replace("၌", "နှိုက်")

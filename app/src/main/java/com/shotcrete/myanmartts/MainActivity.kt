@@ -4,6 +4,7 @@ import android.app.ProgressDialog
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
+import android.media.MediaPlayer
 import android.os.Bundle
 import android.os.Environment
 import android.widget.Button
@@ -25,6 +26,10 @@ class MainActivity : AppCompatActivity() {
     private var ortEnv: OrtEnvironment? = null
     private var ortSession: OrtSession? = null
     private var progressDialog: ProgressDialog? = null
+    
+    // နောက်ဆုံးထွက်ထားသော အသံဖိုင်လမ်းကြောင်းကို မှတ်ထားရန်
+    private var lastAudioFilePath: String? = null
+    private var mediaPlayer: MediaPlayer? = null
 
     private val vocabMap = mapOf(
         '်' to 0L, 'ာ' to 1L, 'ု' to 2L, 'ိ' to 3L, 'း' to 4L, 'ေ' to 5L, 'သ' to 6L, 'က' to 7L,
@@ -43,13 +48,14 @@ class MainActivity : AppCompatActivity() {
 
         val inputText = findViewById<EditText>(R.id.inputText)
         val speakButton = findViewById<Button>(R.id.speakButton)
+        val playLastButton = findViewById<Button>(R.id.playLastButton)
 
-        // Loading အဝိုင်းပြရန် Dialog ဆောက်ခြင်း
         progressDialog = ProgressDialog(this).apply {
-            setMessage("အသံဖိုင်ပြောင်းလဲနေပါသည်... ခဏစောင့်ပါ...")
-            setCancelable(false) // အလုပ်လုပ်နေတုန်း အပြင်နှိပ်ရင် ပိတ်မသွားစေရန်
+            setMessage("မြန်မာအသံဖိုင်ပြောင်းလဲနေပါသည်... ခဏစောင့်ပါ...")
+            setCancelable(false)
         }
 
+        // Engine နှိုးခြင်း
         thread(start = true) {
             try {
                 ortEnv = OrtEnvironment.getEnvironment()
@@ -72,7 +78,7 @@ class MainActivity : AppCompatActivity() {
                 }
             } catch (e: Exception) {
                 runOnUiThread {
-                    Toast.makeText(this@MainActivity, "Engine ပွင့်ရန် အမှားတက်သွားပါသည်: ${e.message}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this@MainActivity, "Engine Error: ${e.message}", Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -83,17 +89,16 @@ class MainActivity : AppCompatActivity() {
                 val session = ortSession
                 val env = ortEnv
                 if (session == null || env == null) {
-                    Toast.makeText(this, "Engine မနိုးသေးပါ၊ ခဏစောင့်ပါ...", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "Engine မနိုးသေးပါ...", Toast.LENGTH_SHORT).show()
                     return@setOnClickListener
                 }
 
-                // 🛠️ ခလုတ်နှိပ်လိုက်တာနဲ့ စကရင်ပေါ်မှာ အလုပ်လုပ်နေကြောင်း အဝိုင်းလေး စလည်ပါမယ်
                 progressDialog?.show()
 
                 thread(start = true) {
                     try {
-                        // 🛠️ စာသားထဲက အမတ်အစက်တွေနဲ့ အင်္ဂလိပ်စာလုံးတွေကို ရှင်းထုတ်ခြင်း
-                        var cleanedText = cleanInputText(rawText)
+                        // 🛠️ ၁။ စာလုံးကျော်ခြင်းနှင့် အသံပျက်ခြင်းကို ကာကွယ်ရန် စာသားကြိုတင်ပြင်ဆင်ခြင်း
+                        var cleanedText = preProcessMyanmarText(rawText)
                         cleanedText = normalizeNumbers(cleanedText)
                         cleanedText = cleanedText.replace(" ", "")
 
@@ -165,26 +170,32 @@ class MainActivity : AppCompatActivity() {
                             if (absF > maxVal) maxVal = absF
                         }
                         if (maxVal > 0) {
-                            val gain = 0.9f / maxVal
+                            val gain = 0.85f / maxVal
                             for (i in finalAudioFloats.indices) {
                                 finalAudioFloats[i] = finalAudioFloats[i] * gain
                             }
                         }
 
-                        // WAV ဖိုင်ထုတ်ခြင်း
+                        // 🛠️ ၂။ /sdcard/MyanmarTTS/ ဖိုဒါပုံစံအတိုင်း သီးသန့်နေရာတွင် ဖိုင်ထုတ်ခြင်း
                         val sampleRate = 16000
-                        val exportDir = getExternalFilesDir(Environment.DIRECTORY_MUSIC)
-                        val outputFile = File(exportDir, "Myanmar_TTS_${System.currentTimeMillis()}.wav")
+                        val baseDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC)
+                        val myanmarTtsDir = File(baseDir, "MyanmarTTS")
+                        if (!myanmarTtsDir.exists()) {
+                            myanmarTtsDir.mkdirs()
+                        }
                         
+                        val outputFile = File(myanmarTtsDir, "TTS_${System.currentTimeMillis()}.wav")
                         saveFloatsToWav(outputFile, finalAudioFloats, sampleRate)
 
+                        // နောက်ဆုံးထွက်ဖိုင်လမ်းကြောင်းကို သိမ်းဆည်းခြင်း
+                        lastAudioFilePath = outputFile.absolutePath
+
                         runOnUiThread {
-                            // 🛠️ အသံဖိုင်ထုတ်ပြီးသွားရင် အဝိုင်းလည်တာကို ပြန်ပိတ်ပေးပါတယ်
                             progressDialog?.dismiss()
-                            Toast.makeText(this@MainActivity, "ဖိုင်သိမ်းပြီးပါပြီ- ${outputFile.name}", Toast.LENGTH_LONG).show()
+                            Toast.makeText(this@MainActivity, "ဖိုင်ကို Music/MyanmarTTS/ တွင် သိမ်းပြီးပါပြီ", Toast.LENGTH_LONG).show()
                         }
 
-                        // AudioTrack ဖြင့် ချက်ချင်းပြန်ဖွင့်ခြင်း
+                        // အသံတိုက်ရိုက်လွှင့်ထုတ်ခြင်း
                         val bufferSize = AudioTrack.getMinBufferSize(
                             sampleRate,
                             AudioFormat.CHANNEL_OUT_MONO,
@@ -204,7 +215,7 @@ class MainActivity : AppCompatActivity() {
 
                     } catch (e: Exception) {
                         runOnUiThread {
-                            progressDialog?.dismiss() // Error တက်ရင်လည်း အဝိုင်းပိတ်ရန်
+                            progressDialog?.dismiss()
                             Toast.makeText(this@MainActivity, "အမှားတက်သွားပါသည်: ${e.message}", Toast.LENGTH_LONG).show()
                         }
                     }
@@ -213,14 +224,46 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, "စာသား အရင်ရိုက်ပေးပါ", Toast.LENGTH_SHORT).show()
             }
         }
+
+        // 🛠️ ၃။ နောက်ဆုံးထွက်ထားသော အသံဖိုင်ကို ပြန်လည်နားထောင်သည့် လုပ်ဆောင်ချက်
+        playLastButton.setOnClickListener {
+            val path = lastAudioFilePath
+            if (path != null && File(path).exists()) {
+                try {
+                    mediaPlayer?.release()
+                    mediaPlayer = MediaPlayer().apply {
+                        setDataSource(path)
+                        prepare()
+                        start()
+                    }
+                    Toast.makeText(this, "နောက်ဆုံးထွက်ဖိုင်ကို ပြန်ဖွင့်နေပါသည်...", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    Toast.makeText(this, "ဖွင့်ရန် အဆင်မပြေပါ: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            } else {
+                Toast.makeText(this, "ဖွင့်ရန် အသံဖိုင် မရှိသေးပါ၊ အရင်ပြောင်းပေးပါ", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
-    // 🛠️ စာသားသန့်စင်ပေးသည့် စနစ် (မော်ဒယ် Error မတက်အောင် သင်္ကေတများ ရှင်းထုတ်ခြင်း)
-    private fun cleanInputText(text: String): String {
-        var result = text
-        // xxxxxxxx သို့မဟုတ် အစက်အပြောက်များကို ဖယ်ရှားခြင်း
-        result = result.replace(Regex("[xX._\\-*#+=()_]"), "")
-        return result
+    // 🛠️ ၄။ စာလုံးကျော်ဖတ်ခြင်းနှင့် "အီ" သံထွက်ခြင်းကို ဖြေရှင်းပေးမည့် စာသားပြုပြင်စနစ်
+    private fun preProcessMyanmarText(text: String): String {
+        var res = text
+        // မော်ဒယ်ဖတ်ရခက်ခဲသော သင်္ကေတများနှင့် xxxx များကို ဖယ်ရှားခြင်း
+        res = res.replace(Regex("[xX._\\-*#+=()_]"), "")
+        
+        // ၌၊ ၍၊ ၏၊ ဤ စသည်တို့ကို အသံထွက်အတိုင်း စာသားပြောင်းပေးခြင်း
+        res = res.replace("၌", "နှိုက်")
+        res = res.replace("၍", "ရွေ့")
+        res = res.replace("၏", "အိ")
+        res = res.replace("ဤ", "အီ")
+        
+        // ဗျည်းဆင့်စာလုံးများကို မော်ဒယ်ဖတ်နိုင်အောင် အသံထွက်အတိုင်း ယာယီဖြန့်ပေးခြင်း
+        res = res.replace("ဘဏ္ဍာ", "ဘန်ဒါ")
+        res = res.replace("သဏ္ဌာန်", "သန်ထန်")
+        res = res.replace("ဥက္ကာမြဲ", "အုတ်ကာမြဲ")
+        
+        return res
     }
 
     private fun splitTextIntoChunks(text: String): List<String> {
@@ -231,7 +274,7 @@ class MainActivity : AppCompatActivity() {
         var currentChunk = ""
         for (match in matches) {
             val segment = match.value
-            if (currentChunk.length + segment.length > 35) { // စာသားအပိုင်းအစကို ၃၅ လုံးအထိ လျှော့ချ၍ RAM သက်သာစေခြင်း
+            if (currentChunk.length + segment.length > 35) {
                 if (currentChunk.isNotEmpty()) chunks.add(currentChunk)
                 currentChunk = segment
             } else {
@@ -292,7 +335,8 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        progressDialog?.dismiss() // Memory leak မဖြစ်အောင် ပိတ်ပေးခြင်း
+        mediaPlayer?.release()
+        progressDialog?.dismiss()
         ortSession?.close()
         ortEnv?.close()
     }

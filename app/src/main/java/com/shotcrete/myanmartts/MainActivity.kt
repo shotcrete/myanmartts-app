@@ -109,18 +109,24 @@ class MainActivity : AppCompatActivity() {
 
                         for (chunk in chunks) {
                             val cleanChunk = chunk.replace(" ", "")
+                            // VocabMap ထဲတွင် အမှန်တကယ်ရှိသော စာလုံးများကိုသာ စစ်ထုတ်ယူခြင်း
                             val validChars = cleanChunk.filter { vocabMap.containsKey(it) }
                             if (validChars.length < 2) continue
 
                             val tokenList = mutableListOf<Long>()
                             tokenList.add(0L) 
                             for (i in validChars.indices) {
+                                // 🛠️ SAFE FIX: အကယ်၍ မရှိခဲ့ပါက Index Error မတက်စေရန် 56L (Space) ဖြင့် သေချာစွာ Bound ထိန်းခြင်း
                                 val id = vocabMap[validChars[i]] ?: 56L
-                                tokenList.add(id)
-                                tokenList.add(0L)
+                                if (id in 0L..56L) { 
+                                    tokenList.add(id)
+                                    tokenList.add(0L)
+                                }
                             }
 
                             val inputSequence = tokenList.toLongArray()
+                            if (inputSequence.isEmpty()) continue
+                            
                             val inputShape = longArrayOf(1, inputSequence.size.toLong())
 
                             val inputTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(inputSequence), inputShape)
@@ -268,7 +274,6 @@ class MainActivity : AppCompatActivity() {
         res = res.replace("သဏ္ဌာန်", "သန်ထန်")
         res = res.replace("ဥက္ကာမြဲ", "အုတ်ကာမြဲ")
         
-        // 🛠️ FIX: ဝါကျအတိုများတွင် အမြီးဖြတ်ခြင်း (Audio Cut-off) ကာကွယ်ရန် Silence Space အပိုထည့်သွင်းခြင်း
         if (!res.endsWith(" ")) {
             res = "$res   "
         }

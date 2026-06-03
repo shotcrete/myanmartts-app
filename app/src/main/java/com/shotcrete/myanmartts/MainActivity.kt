@@ -268,15 +268,18 @@ class MainActivity : AppCompatActivity() {
         res = res.replace("သဏ္ဌာန်", "သန်ထန်")
         res = res.replace("ဥက္ကာမြဲ", "အုတ်ကာမြဲ")
         
+        // 🛠️ FIX: ဝါကျအတိုများတွင် အမြီးဖြတ်ခြင်း (Audio Cut-off) ကာကွယ်ရန် Silence Space အပိုထည့်သွင်းခြင်း
+        if (!res.endsWith(" ")) {
+            res = "$res   "
+        }
+        
         return res
     }
 
-    // 🛠️ FIX: စာကြောင်းခွဲသည့် စနစ်အား နောက်ဆုံးစာလုံးပါ အပြည့်အဝရအောင် တိကျသော Regex သို့ ပြောင်းလဲခြင်း
     private fun splitTextByPunctuationAndSpace(text: String): List<String> {
         val chunks = mutableListOf<String>()
-        // စာသားအဆုံးသတ် ($) ပါဝင်သော စနစ်သစ် Regex
         val regex = Regex("([^။၊\\s]+(?:[။၊\\s]+|$))")
-        val matches = regex.findAll(text + " ") // သေချာစေရန် ကွင်းပြင်တစ်ခု ပတ်ပေးခြင်း
+        val matches = regex.findAll(text + " ") 
         
         var currentChunk = ""
         for (match in matches) {

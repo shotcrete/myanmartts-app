@@ -24,6 +24,7 @@ import java.io.FileOutputStream
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.nio.ShortBuffer
 import java.util.HashMap
 import kotlin.concurrent.thread
 
@@ -35,7 +36,6 @@ class MainActivity : AppCompatActivity() {
     private var lastAudioFilePath: String? = null
     private var mediaPlayer: MediaPlayer? = null
 
-    // vocab.json နှင့် တိကျစွာ ကိုက်ညီသော Map
     private val vocabMap = mapOf(
         '်' to 0L, 'ာ' to 1L, 'ု' to 2L, 'ိ' to 3L, 'း' to 4L, 'ေ' to 5L, 'သ' to 6L, 'က' to 7L,
         'င' to 8L, 'တ' to 9L, '့' to 10L, 'မ' to 11L, 'ြ' to 12L, 'ည' to 13L, 'ရ' to 14L, 'အ' to 15L,
@@ -60,7 +60,6 @@ class MainActivity : AppCompatActivity() {
             setCancelable(false)
         }
 
-        // Engine နှိုးခြင်း
         thread(start = true) {
             try {
                 ortEnv = OrtEnvironment.getEnvironment()
@@ -102,6 +101,7 @@ class MainActivity : AppCompatActivity() {
 
                 thread(start = true) {
                     try {
+                        // 🛠️ စာသားများအား မော်ဒယ်အသံထွက် အမှန်ကန်ဆုံးဖြစ်အောင် သန့်စင်ခြင်း
                         var processedText = preProcessMyanmarText(rawText)
                         processedText = normalizeNumbers(processedText)
 
@@ -114,7 +114,7 @@ class MainActivity : AppCompatActivity() {
                             if (validChars.length < 2) continue
 
                             val tokenList = mutableListOf<Long>()
-                            tokenList.add(0L) // Blank Token (add_blank: true အရ)
+                            tokenList.add(0L) 
                             for (i in validChars.indices) {
                                 val id = vocabMap[validChars[i]] ?: 56L
                                 tokenList.add(id)
@@ -124,17 +124,12 @@ class MainActivity : AppCompatActivity() {
                             val inputSequence = tokenList.toLongArray()
                             val inputShape = longArrayOf(1, inputSequence.size.toLong())
 
-                            // 🛠️ FIX: Single Speaker Model အတွက် အမှန်ကန်ဆုံး Input Dynamic Tensors များ တည်ဆောက်ခြင်း
                             val inputTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(inputSequence), inputShape)
                             val lengthTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(inputSequence.size.toLong())), longArrayOf(1))
-                            
-                            // config.json ပါ scales တန်ဖိုးများကို တိုက်ရိုက်ထည့်သွင်းခြင်း
-                            val scalesData = floatArrayOf(0.667f, 1.0f, 0.8f) // noise_scale, speaking_rate, noise_scale_duration
+                            val scalesData = floatArrayOf(0.667f, 1.0f, 0.8f) 
                             val scalesTensor = OnnxTensor.createTensor(env, java.nio.FloatBuffer.wrap(scalesData), longArrayOf(3))
 
                             val inputMap = HashMap<String, OnnxTensor>()
-                            
-                            // မော်ဒယ်၏ တကယ့် Input Name များအတိုင်း စစ်ဆေး၍ ထည့်သွင်းခြင်း
                             for (name in session.inputNames) {
                                 when {
                                     name == "input" || name.contains("input_ids") -> inputMap[name] = inputTensor
@@ -143,7 +138,6 @@ class MainActivity : AppCompatActivity() {
                                 }
                             }
 
-                            // အကယ်၍ မော်ဒယ်က scales မဟုတ်ဘဲ attention_mask တောင်းပါက ၎င်းအတိုင်း ပြောင်းလဲပေးခြင်း
                             if (!inputMap.containsKey("scales") && session.inputNames.any { it.contains("mask") }) {
                                 val maskTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(LongArray(inputSequence.size) { 1L }), inputShape)
                                 for (name in session.inputNames) {
@@ -198,13 +192,14 @@ class MainActivity : AppCompatActivity() {
                             myanmarTtsDir.mkdirs()
                         }
                         
-                        val tempWavFile = File(cacheDir, "temp.wav")
-                        saveFloatsToWav(tempWavFile, finalAudioFloats, sampleRate)
+                        // ယာယီ PCM ဖိုင်တည်ဆောက်ခြင်း
+                        val tempPcmFile = File(cacheDir, "temp.pcm")
+                        saveFloatsToPcm16(tempPcmFile, finalAudioFloats)
 
-                        // 🛠️ FIX: MediaMuxer သုံး၍ စံချိန်မီ အမှားကင်းသော AAC (.m4a) ဖိုင်အဖြစ် ပြောင်းလဲသိမ်းဆည်းခြင်း
+                        // 🛠️ ပြုပြင်ချက်- MediaMuxer သို့ PCM16 စစ်စစ်ထည့်သွင်း၍ ကြည်လင်သော AAC ဖိုင်ထုတ်ခြင်း
                         val outputAacFile = File(myanmarTtsDir, "TTS_${System.currentTimeMillis()}.m4a")
-                        convertWavToAacMuxer(tempWavFile, outputAacFile)
-                        tempWavFile.delete() 
+                        convertPcmToAacMuxer(tempPcmFile, outputAacFile, sampleRate)
+                        tempPcmFile.delete() 
 
                         lastAudioFilePath = outputAacFile.absolutePath
 
@@ -243,7 +238,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // နောက်ဆုံးထွက်ဖိုင်ကို တိကျစွာ ပြန်ဖွင့်ပေးသည့် လုပ်ဆောင်ချက်
         playLastButton.setOnClickListener {
             val path = lastAudioFilePath
             if (path != null && File(path).exists()) {
@@ -264,17 +258,21 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // 🛠️ FIX: "၏" ကို "၍" သံ လုံးဝမထွက်စေဘဲ သဘာဝကျကျ အသံထွက်စေရန် ပြုပြင်ခြင်း
+    // 🛠️ ပြုပြင်ချက်- "၎င်း" ၊ "၏" နှင့် "ပြဿနာ" သံများ အမှားကင်းစေရန် အသံဖလှယ်ပုံစနစ် ပြောင်းလဲခြင်း
     private fun preProcessMyanmarText(text: String): String {
         var res = text
         res = res.replace(Regex("[xX._\\-*#+=()_]"), "")
         
-        // ၏ ကို အီး/အီ သို့ ပြောင်းလဲခြင်းဖြင့် ၍ သံထွက်ခြင်းကို ရာနှုန်းပြည့် တားဆီးသည်
+        // ၎င်း ကို "လင်း" သို့မဟုတ် "လန်း" သံထွက်မသွားစေဘဲ "ဒင်း" (သို့) "၎င်း" အသံထွက်အတိုင်း စာသားပြောင်းပေးခြင်း
+        res = res.replace("၎င်း", "ဒင်း")
+        
+        // ၏ ကို "တယ်" သို့မဟုတ် "ဒီ" ဟု ပြောင်းလဲခြင်းဖြင့် ၍ သံထွက်ခြင်းကို အပြီးတိုင် ဖြေရှင်းခြင်း
+        res = res.replace("ဖြစ်၏", "ဖြစ်တယ်") 
         res = res.replace("၏", "အီး")
+        
         res = res.replace("၌", "နှိုက်")
         res = res.replace("၍", "ရွေ့")
         res = res.replace("ဤ", "အီ")
-        
         res = res.replace("ဘဏ္ဍာ", "ဘန်ဒါ")
         res = res.replace("သဏ္ဌာန်", "သန်ထန်")
         res = res.replace("ဥက္ကာမြဲ", "အုတ်ကာမြဲ")
@@ -284,13 +282,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun splitTextByPunctuationAndSpace(text: String): List<String> {
         val chunks = mutableListOf<String>()
-        val regex = Regex("([^။၊ \\n]+[။၊ \\n]?)")
+        val regex = Regex("([^။၊  \n]+[။၊  \n]?)")
         val matches = regex.findAll(text)
         
         var currentChunk = ""
         for (match in matches) {
             val segment = match.value
-            if (currentChunk.length + segment.length > 50) {
+            if (currentChunk.length + segment.length > 60) {
                 if (currentChunk.isNotEmpty()) chunks.add(currentChunk)
                 currentChunk = segment
             } else {
@@ -315,43 +313,28 @@ class MainActivity : AppCompatActivity() {
         return res
     }
 
-    private fun saveFloatsToWav(file: File, floatData: FloatArray, sampleRate: Int) {
-        val payloadSize = floatData.size * 4 
-        val totalSize = payloadSize + 36
-
-        RandomAccessFile(file, "rw").use { raf ->
-            raf.setLength(0) 
-            raf.writeBytes("RIFF")
-            raf.writeInt(Integer.reverseBytes(totalSize))
-            raf.writeBytes("WAVE")
-            raf.writeBytes("fmt ")
-            raf.writeInt(Integer.reverseBytes(16)) 
-            raf.writeShort(Integer.reverseBytes(3) shr 16 or (Integer.reverseBytes(3) and 0xFFFF)) 
-            raf.writeShort(Integer.reverseBytes(1) shr 16 or (Integer.reverseBytes(1) and 0xFFFF)) 
-            raf.writeInt(Integer.reverseBytes(sampleRate)) 
-            raf.writeInt(Integer.reverseBytes(sampleRate * 4)) 
-            raf.writeShort(Integer.reverseBytes(4) shr 16 or (Integer.reverseBytes(4) and 0xFFFF)) 
-            raf.writeShort(Integer.reverseBytes(32) shr 16 or (Integer.reverseBytes(32) and 0xFFFF)) 
-            raf.writeBytes("data")
-            raf.writeInt(Integer.reverseBytes(payloadSize))
-
-            val byteBuffer = ByteBuffer.allocate(payloadSize).order(ByteOrder.LITTLE_ENDIAN)
-            for (f in floatData) {
-                byteBuffer.putFloat(f)
-            }
-            raf.write(byteBuffer.array())
+    // Float32 မှ Int16 သို့ တိကျစွာ Byte Mapping ပြုလုပ်၍ PCM ဖိုင်သိမ်းဆည်းခြင်း
+    private fun saveFloatsToPcm16(file: File, floatData: FloatArray) {
+        val fos = FileOutputStream(file)
+        val byteBuffer = ByteBuffer.allocate(floatData.size * 2).order(ByteOrder.LITTLE_ENDIAN)
+        for (f in floatData) {
+            // Float (-1.0 to 1.0) မှ Short (-32768 to 32767) သို့ ပြောင်းလဲခြင်း
+            var s = (f * 32767.0f).toInt()
+            if (s > 32767) s = 32767
+            if (s < -32768) s = -32768
+            byteBuffer.putShort(s.toShort())
         }
+        fos.write(byteBuffer.array())
+        fos.close()
     }
 
-    // 🛠️ FIX: ရှပ်ရှပ်မြည်သံ ကင်းဝေးစေရန် စံချိန်မီ MediaMuxer စနစ်ဖြင့် တိကျစွာ AAC Encoded လုပ်ခြင်း
-    private fun convertWavToAacMuxer(wavFile: File, aacFile: File) {
-        val fis = FileInputStream(wavFile)
-        fis.skip(44) // WAV Header ကျော်ရန်
-
+    // 🛠️ ပြုပြင်ချက်- PCM16 လမ်းကြောင်းမှ ဝင်လာသော Data အား Noise ကင်းစင်စွာဖြင့် AAC (.m4a) အဖြစ် ပြောင်းလဲခြင်း
+    private fun convertPcmToAacMuxer(pcmFile: File, aacFile: File, sampleRate: Int) {
+        val fis = FileInputStream(pcmFile)
         val muxer = MediaMuxer(aacFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
         
         val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
-        val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, 16000, 1).apply {
+        val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, 1).apply {
             setInteger(MediaFormat.KEY_BIT_RATE, 64000)
             setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
             setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 1024 * 10)
@@ -382,8 +365,8 @@ class MainActivity : AppCompatActivity() {
                     } else {
                         inputBuffer.put(rawBuffer, 0, bytesRead)
                         codec.queueInputBuffer(inputBufferIndex, 0, bytesRead, presentationTimeUs, 0)
-                        // TimeStamp တွက်ချက်ခြင်း (16000Hz Mono အတွက်)
-                        presentationTimeUs += (bytesRead / 2) * 1000000L / 16000L
+                        // PCM 16-bit Mono (1 sample = 2 bytes) အခြေခံဖြင့် အချိန်တွက်ချက်ခြင်း
+                        presentationTimeUs += (bytesRead / 2) * 1000000L / sampleRate.toLong()
                     }
                 }
             }
@@ -404,7 +387,6 @@ class MainActivity : AppCompatActivity() {
                     outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
                     muxer.writeSampleData(audioTrackIndex, outputBuffer, bufferInfo)
                 } else if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
-                    // Codec Config ရရှိချိန်တွင် Track တိုးပြီး Muxer စတင်နှိုးခြင်း
                     if (!isMuxerStarted) {
                         val newFormat = codec.outputFormat
                         audioTrackIndex = muxer.addTrack(newFormat)

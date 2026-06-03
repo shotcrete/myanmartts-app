@@ -155,7 +155,7 @@ class MainActivity : AppCompatActivity() {
                             }
                         }
 
-                        // 🛠️ ၁။ WAV ဖိုင်အဖြစ် ဖုန်းထဲသို့ အပြီးအပိုင်သိမ်းဆည်းခြင်း လုပ်ငန်းစဉ်
+                        // WAV ဖိုင်ထုတ်ခြင်း
                         val sampleRate = 16000
                         val exportDir = getExternalFilesDir(Environment.DIRECTORY_MUSIC)
                         val outputFile = File(exportDir, "Myanmar_TTS_${System.currentTimeMillis()}.wav")
@@ -166,7 +166,7 @@ class MainActivity : AppCompatActivity() {
                             Toast.makeText(this@MainActivity, "ဖိုင်သိမ်းပြီးပါပြီ- ${outputFile.name}", Toast.LENGTH_LONG).show()
                         }
 
-                        // ြ။ သိမ်းပြီးသား ဖိုင်ကို AudioTrack ဖြင့် ချက်ချင်းပြန်ဖွင့်ပြခြင်း
+                        // AudioTrack ဖြင့် ချက်ချင်းပြန်ဖွင့်ခြင်း
                         val bufferSize = AudioTrack.getMinBufferSize(
                             sampleRate,
                             AudioFormat.CHANNEL_OUT_MONO,
@@ -229,13 +229,13 @@ class MainActivity : AppCompatActivity() {
         return res
     }
 
-    // 🛠️ WAV File Standard Header ရေးသားပြီး ဖိုင်ထုတ်ပေးသည့် Helper Function
+    // 🛠️ Type Mismatch အား လုံးဝပြုပြင်ပြီးသား WAV Exporter စနစ်
     private fun saveFloatsToWav(file: File, floatData: FloatArray, sampleRate: Int) {
-        val payloadSize = floatData.size * 4 // Float ဖြစ်၍ 1 Sample လျှင် 4 Bytes ရှိပါသည်
+        val payloadSize = floatData.size * 4 
         val totalSize = payloadSize + 36
 
         RandomAccessFile(file, "rw").use { raf ->
-            raf.setLength(0) // ဖိုင်ဟောင်းရှိက အစကပြန်ဖျက်ရန်
+            raf.setLength(0) 
 
             // RIFF Header
             raf.writeBytes("RIFF")
@@ -244,19 +244,22 @@ class MainActivity : AppCompatActivity() {
 
             // Sub-chunk 1 (fmt )
             raf.writeBytes("fmt ")
-            raf.writeInt(Integer.reverseBytes(16)) // Subchunk1Size (16 for PCM)
-            raf.writeShort(java.lang.Short.reverseBytes(3)) // AudioFormat (3 for IEEE Float)
-            raf.writeShort(java.lang.Short.reverseBytes(1)) // NumChannels (Mono = 1)
-            raf.writeInt(Integer.reverseBytes(sampleRate)) // SampleRate
-            raf.writeInt(Integer.reverseBytes(sampleRate * 4)) // ByteRate (SampleRate * Channel * 4)
-            raf.writeShort(java.lang.Short.reverseBytes(4)) // BlockAlign (Channel * 4)
-            raf.writeShort(java.lang.Short.reverseBytes(32)) // BitsPerSample (32 bits)
+            raf.writeInt(Integer.reverseBytes(16)) 
+            
+            // Int parameter မျှော်လင့်ထားသည့် နေရာများကို သတ်မှတ်ချက်အတိုင်း ပြင်ဆင်ခြင်း
+            raf.writeShort(Integer.reverseBytes(3) shr 16 or (Integer.reverseBytes(3) and 0xFFFF)) 
+            raf.writeShort(Integer.reverseBytes(1) shr 16 or (Integer.reverseBytes(1) and 0xFFFF)) 
+            
+            raf.writeInt(Integer.reverseBytes(sampleRate)) 
+            raf.writeInt(Integer.reverseBytes(sampleRate * 4)) 
+            
+            raf.writeShort(Integer.reverseBytes(4) shr 16 or (Integer.reverseBytes(4) and 0xFFFF)) 
+            raf.writeShort(Integer.reverseBytes(32) shr 16 or (Integer.reverseBytes(32) and 0xFFFF)) 
 
             // Sub-chunk 2 (data)
             raf.writeBytes("data")
             raf.writeInt(Integer.reverseBytes(payloadSize))
 
-            // Byte Buffer သုံးပြီး Float ဒေတာများကို Little Endian စနစ်ဖြင့် ဖိုင်ထဲသို့ ထည့်သွင်းခြင်း
             val byteBuffer = ByteBuffer.allocate(payloadSize).order(ByteOrder.LITTLE_ENDIAN)
             for (f in floatData) {
                 byteBuffer.putFloat(f)

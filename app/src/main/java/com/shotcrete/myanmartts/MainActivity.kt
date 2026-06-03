@@ -257,9 +257,7 @@ class MainActivity : AppCompatActivity() {
         var res = text
         res = res.replace(Regex("[xX._\\-*#+=()_]"), "")
         
-        // 🛠️ FIX: "ဪ" ကို "အော်" ဟု အစ်ကို့ညွှန်ကြားချက်အတိုင်း အလိုအလျောက် ပြောင်းလဲဖတ်စေခြင်း
         res = res.replace("ဪ", "အော်")
-        
         res = res.replace("၎င်း", "လဂေါင်း")
         res = res.replace("ဖြစ်၏", "ဖြစ်တယ်") 
         res = res.replace("၏", "အီး")
@@ -273,10 +271,12 @@ class MainActivity : AppCompatActivity() {
         return res
     }
 
+    // 🛠️ FIX: စာကြောင်းခွဲသည့် စနစ်အား နောက်ဆုံးစာလုံးပါ အပြည့်အဝရအောင် တိကျသော Regex သို့ ပြောင်းလဲခြင်း
     private fun splitTextByPunctuationAndSpace(text: String): List<String> {
         val chunks = mutableListOf<String>()
-        val regex = Regex("([^။၊  \n]+[။၊  \n]?)")
-        val matches = regex.findAll(text)
+        // စာသားအဆုံးသတ် ($) ပါဝင်သော စနစ်သစ် Regex
+        val regex = Regex("([^။၊\\s]+(?:[။၊\\s]+|$))")
+        val matches = regex.findAll(text + " ") // သေချာစေရန် ကွင်းပြင်တစ်ခု ပတ်ပေးခြင်း
         
         var currentChunk = ""
         for (match in matches) {

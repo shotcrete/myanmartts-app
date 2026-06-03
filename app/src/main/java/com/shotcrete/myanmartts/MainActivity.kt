@@ -1,5 +1,6 @@
 package com.shotcrete.myanmartts
 
+import android.app.ProgressDialog
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
@@ -23,6 +24,7 @@ import kotlin.concurrent.thread
 class MainActivity : AppCompatActivity() {
     private var ortEnv: OrtEnvironment? = null
     private var ortSession: OrtSession? = null
+    private var progressDialog: ProgressDialog? = null
 
     private val vocabMap = mapOf(
         '်' to 0L, 'ာ' to 1L, 'ု' to 2L, 'ိ' to 3L, 'း' to 4L, 'ေ' to 5L, 'သ' to 6L, 'က' to 7L,
@@ -41,6 +43,12 @@ class MainActivity : AppCompatActivity() {
 
         val inputText = findViewById<EditText>(R.id.inputText)
         val speakButton = findViewById<Button>(R.id.speakButton)
+
+        // Loading အဝိုင်းပြရန် Dialog ဆောက်ခြင်း
+        progressDialog = ProgressDialog(this).apply {
+            setMessage("အသံဖိုင်ပြောင်းလဲနေပါသည်... ခဏစောင့်ပါ...")
+            setCancelable(false) // အလုပ်လုပ်နေတုန်း အပြင်နှိပ်ရင် ပိတ်မသွားစေရန်
+        }
 
         thread(start = true) {
             try {
@@ -79,23 +87,27 @@ class MainActivity : AppCompatActivity() {
                     return@setOnClickListener
                 }
 
-                Toast.makeText(this, "အသံဖိုင်ပြောင်းလဲနေပါသည်...", Toast.LENGTH_SHORT).show()
+                // 🛠️ ခလုတ်နှိပ်လိုက်တာနဲ့ စကရင်ပေါ်မှာ အလုပ်လုပ်နေကြောင်း အဝိုင်းလေး စလည်ပါမယ်
+                progressDialog?.show()
 
                 thread(start = true) {
                     try {
-                        var normalizedText = normalizeNumbers(rawText)
-                        normalizedText = normalizedText.replace(" ", "")
+                        // 🛠️ စာသားထဲက အမတ်အစက်တွေနဲ့ အင်္ဂလိပ်စာလုံးတွေကို ရှင်းထုတ်ခြင်း
+                        var cleanedText = cleanInputText(rawText)
+                        cleanedText = normalizeNumbers(cleanedText)
+                        cleanedText = cleanedText.replace(" ", "")
 
-                        val chunks = splitTextIntoChunks(normalizedText)
+                        val chunks = splitTextIntoChunks(cleanedText)
                         val combinedAudioList = mutableListOf<FloatArray>()
 
                         for (chunk in chunks) {
-                            if (chunk.length < 2) continue
+                            val validChars = chunk.filter { vocabMap.containsKey(it) }
+                            if (validChars.length < 2) continue
 
                             val tokenList = mutableListOf<Long>()
                             tokenList.add(0L)
-                            for (i in chunk.indices) {
-                                val id = vocabMap[chunk[i]] ?: 56L
+                            for (i in validChars.indices) {
+                                val id = vocabMap[validChars[i]] ?: 56L
                                 tokenList.add(id)
                                 tokenList.add(0L)
                             }
@@ -133,7 +145,11 @@ class MainActivity : AppCompatActivity() {
                             results.close()
                         }
 
-                        if (combinedAudioList.isEmpty()) return@thread
+                        if (combinedAudioList.isEmpty()) {
+                            runOnUiThread { progressDialog?.dismiss() }
+                            return@thread
+                        }
+                        
                         val totalLength = combinedAudioList.sumOf { it.size }
                         val finalAudioFloats = FloatArray(totalLength)
                         var destPos = 0
@@ -163,6 +179,8 @@ class MainActivity : AppCompatActivity() {
                         saveFloatsToWav(outputFile, finalAudioFloats, sampleRate)
 
                         runOnUiThread {
+                            // 🛠️ အသံဖိုင်ထုတ်ပြီးသွားရင် အဝိုင်းလည်တာကို ပြန်ပိတ်ပေးပါတယ်
+                            progressDialog?.dismiss()
                             Toast.makeText(this@MainActivity, "ဖိုင်သိမ်းပြီးပါပြီ- ${outputFile.name}", Toast.LENGTH_LONG).show()
                         }
 
@@ -186,6 +204,7 @@ class MainActivity : AppCompatActivity() {
 
                     } catch (e: Exception) {
                         runOnUiThread {
+                            progressDialog?.dismiss() // Error တက်ရင်လည်း အဝိုင်းပိတ်ရန်
                             Toast.makeText(this@MainActivity, "အမှားတက်သွားပါသည်: ${e.message}", Toast.LENGTH_LONG).show()
                         }
                     }
@@ -196,6 +215,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // 🛠️ စာသားသန့်စင်ပေးသည့် စနစ် (မော်ဒယ် Error မတက်အောင် သင်္ကေတများ ရှင်းထုတ်ခြင်း)
+    private fun cleanInputText(text: String): String {
+        var result = text
+        // xxxxxxxx သို့မဟုတ် အစက်အပြောက်များကို ဖယ်ရှားခြင်း
+        result = result.replace(Regex("[xX._\\-*#+=()_]"), "")
+        return result
+    }
+
     private fun splitTextIntoChunks(text: String): List<String> {
         val chunks = mutableListOf<String>()
         val regex = Regex("([^။၊\\n]+[။၊\\n]?)")
@@ -204,7 +231,7 @@ class MainActivity : AppCompatActivity() {
         var currentChunk = ""
         for (match in matches) {
             val segment = match.value
-            if (currentChunk.length + segment.length > 40) {
+            if (currentChunk.length + segment.length > 35) { // စာသားအပိုင်းအစကို ၃၅ လုံးအထိ လျှော့ချ၍ RAM သက်သာစေခြင်း
                 if (currentChunk.isNotEmpty()) chunks.add(currentChunk)
                 currentChunk = segment
             } else {
@@ -229,7 +256,6 @@ class MainActivity : AppCompatActivity() {
         return res
     }
 
-    // 🛠️ Type Mismatch အား လုံးဝပြုပြင်ပြီးသား WAV Exporter စနစ်
     private fun saveFloatsToWav(file: File, floatData: FloatArray, sampleRate: Int) {
         val payloadSize = floatData.size * 4 
         val totalSize = payloadSize + 36
@@ -237,16 +263,13 @@ class MainActivity : AppCompatActivity() {
         RandomAccessFile(file, "rw").use { raf ->
             raf.setLength(0) 
 
-            // RIFF Header
             raf.writeBytes("RIFF")
             raf.writeInt(Integer.reverseBytes(totalSize))
             raf.writeBytes("WAVE")
 
-            // Sub-chunk 1 (fmt )
             raf.writeBytes("fmt ")
             raf.writeInt(Integer.reverseBytes(16)) 
             
-            // Int parameter မျှော်လင့်ထားသည့် နေရာများကို သတ်မှတ်ချက်အတိုင်း ပြင်ဆင်ခြင်း
             raf.writeShort(Integer.reverseBytes(3) shr 16 or (Integer.reverseBytes(3) and 0xFFFF)) 
             raf.writeShort(Integer.reverseBytes(1) shr 16 or (Integer.reverseBytes(1) and 0xFFFF)) 
             
@@ -256,7 +279,6 @@ class MainActivity : AppCompatActivity() {
             raf.writeShort(Integer.reverseBytes(4) shr 16 or (Integer.reverseBytes(4) and 0xFFFF)) 
             raf.writeShort(Integer.reverseBytes(32) shr 16 or (Integer.reverseBytes(32) and 0xFFFF)) 
 
-            // Sub-chunk 2 (data)
             raf.writeBytes("data")
             raf.writeInt(Integer.reverseBytes(payloadSize))
 
@@ -270,6 +292,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        progressDialog?.dismiss() // Memory leak မဖြစ်အောင် ပိတ်ပေးခြင်း
         ortSession?.close()
         ortEnv?.close()
     }

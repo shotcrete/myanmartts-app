@@ -104,7 +104,7 @@ class MainActivity : AppCompatActivity() {
                         var processedText = preProcessMyanmarText(rawText)
                         processedText = normalizeNumbers(processedText)
 
-                        // 🛠️ ပြုပြင်ချက်- Space နှင့် ပုဒ်ဖြတ်မှုများကို အခြေခံ၍ စနစ်တကျ ဖြတ်တောက်ခြင်း
+                        // Space နှင့် ပုဒ်ဖြတ်မှုများကို အခြေခံ၍ စနစ်တကျ ဖြတ်တောက်ခြင်း
                         val chunks = splitTextByPunctuationAndSpace(processedText)
                         val combinedAudioList = mutableListOf<FloatArray>()
 
@@ -191,7 +191,7 @@ class MainActivity : AppCompatActivity() {
                         val tempWavFile = File(cacheDir, "temp.wav")
                         saveFloatsToWav(tempWavFile, finalAudioFloats, sampleRate)
 
-                        // 🛠️ ပြုပြင်ချက်- WAV မှ သေးငယ်ကျစ်လျစ်သော AAC (.m4a) ဖော်မတ်သို့ တိုက်ရိုက်ပြောင်းလဲသိမ်းဆည်းခြင်း
+                        // WAV မှ သေးငယ်ကျစ်လျစ်သော AAC (.m4a) ဖော်မတ်သို့ တိုက်ရိုက်ပြောင်းလဲသိမ်းဆည်းခြင်း
                         val outputAacFile = File(myanmarTtsDir, "TTS_${System.currentTimeMillis()}.m4a")
                         convertWavToAac(tempWavFile, outputAacFile)
                         tempWavFile.delete() // ယာယီဖိုင်အားဖျက်ပယ်ခြင်း
@@ -254,7 +254,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // 🛠️ ပြုပြင်ချက်- "၏" သံကို "၍" သံမထွက်စေဘဲ မှန်ကန်အောင် အသံဖလှယ်ပေးသည့်စနစ်
+    // "၏" သံကို "၍" သံမထွက်စေဘဲ မှန်ကန်အောင် အသံဖလှယ်ပေးသည့်စနစ်
     private fun preProcessMyanmarText(text: String): String {
         var res = text
         res = res.replace(Regex("[xX._\\-*#+=()_]"), "")
@@ -272,17 +272,15 @@ class MainActivity : AppCompatActivity() {
         return res
     }
 
-    // 🛠️ ပြုပြင်ချက်- စကားစုအလယ်ခေါင်တွင် အလိုအလျောက်ပြတ်မသွားစေဘဲ Space နှင့် ပုဒ်ဖြတ်များအတိုင်း တိကျစွာခွဲထုတ်သည့်စနစ်
+    // စကားစုအလယ်ခေါင်တွင် အလိုအလျောက်ပြတ်မသွားစေဘဲ Space နှင့် ပုဒ်ဖြတ်များအတိုင်း တိကျစွာခွဲထုတ်သည့်စနစ်
     private fun splitTextByPunctuationAndSpace(text: String): List<String> {
         val chunks = mutableListOf<String>()
-        // ပုဒ်မ(။)၊ ကော်မာ(၊)၊ Space( ) နှင့် စာကြောင်းအသစ်(\n) များကိုသာ အခြေခံ၍ တိကျစွာ ဖြတ်တောက်သည်
         val regex = Regex("([^။၊ \\n]+[။၊ \\n]?)")
         val matches = regex.findAll(text)
         
         var currentChunk = ""
         for (match in matches) {
             val segment = match.value
-            // စကားစုအလိုက် စုစည်းပြီးမှ စာလုံးရေ ၅၀ ကျော်မှသာ နောက်တစ်ပိုင်း ခွဲထုတ်သည်
             if (currentChunk.length + segment.length > 50) {
                 if (currentChunk.isNotEmpty()) chunks.add(currentChunk)
                 currentChunk = segment
@@ -336,10 +334,9 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // 🛠️ စွမ်းဆောင်ရည်မြင့်မားပြီး အသံဖိုင်အရွယ်အစားကို အဆမတန် သေးငယ်စေမည့် WAV to AAC (.m4a) Converter စနစ်
+    // WAV to AAC (.m4a) Converter စနစ် (စာလုံးအမှား ပြင်ဆင်ပြီးသား)
     private fun convertWavToAac(wavFile: File, aacFile: File) {
         val fis = FileInputStream(wavFile)
-        // WAV Header 44 bytes ကို ကျော်ခွပစ်ခြင်း
         fis.skip(44)
 
         val fos = FileOutputStream(aacFile)
@@ -388,13 +385,14 @@ class MainActivity : AppCompatActivity() {
                 outputBuffer.position(bufferInfo.offset)
                 outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
                 
-                // ADTS Header လောင်းထည့်ပြီး AAC သို့ တိုက်ရိုက်ပြောင်းလဲသိမ်းဆည်းခြင်း
                 val outBitsSize = bufferInfo.size
                 val packetSize = outBitsSize + 7
                 val adtsHeader = ByteArray(7)
+                
+                // 🛠️ ဤနေရာရှိ စာလုံးပေါင်းသတ်ပုံအမှား (certification) အား တိကျစွာ ပြင်ဆင်ပြီးပါပြီ
                 adtsHeader[0] = 0xFF.toByte()
                 adtsHeader[1] = 0xF1.toByte()
-                adtsHeader[2] = (((0 certification 1) shl 6) + ( certification 4 shl 2) + (1 shl 1)).toByte()
+                adtsHeader[2] = (((1) shl 6) + (4 shl 2) + (1 shl 1)).toByte()
                 adtsHeader[3] = (((1 shl 6) + (packetSize shr 11)).toByte())
                 adtsHeader[4] = ((packetSize and 0x7FF) shr 3).toByte()
                 adtsHeader[5] = (((packetSize and 7) shl 5) + 0x1F).toByte()

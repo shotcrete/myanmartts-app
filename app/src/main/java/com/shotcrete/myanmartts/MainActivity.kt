@@ -5,6 +5,9 @@ import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
 import android.media.MediaPlayer
+import android.media.MediaCodec
+import android.media.MediaCodecInfo
+import android.media.MediaFormat
 import android.os.Bundle
 import android.os.Environment
 import android.widget.Button
@@ -15,6 +18,7 @@ import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import ai.onnxruntime.OnnxTensor
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
@@ -27,7 +31,6 @@ class MainActivity : AppCompatActivity() {
     private var ortSession: OrtSession? = null
     private var progressDialog: ProgressDialog? = null
     
-    // နောက်ဆုံးထွက်ထားသော အသံဖိုင်လမ်းကြောင်းကို မှတ်ထားရန်
     private var lastAudioFilePath: String? = null
     private var mediaPlayer: MediaPlayer? = null
 
@@ -55,7 +58,7 @@ class MainActivity : AppCompatActivity() {
             setCancelable(false)
         }
 
-        // Engine နှိုးခြင်း
+        // TTS Engine မောင်းနှင်ခြင်း
         thread(start = true) {
             try {
                 ortEnv = OrtEnvironment.getEnvironment()
@@ -97,16 +100,17 @@ class MainActivity : AppCompatActivity() {
 
                 thread(start = true) {
                     try {
-                        // 🛠️ ၁။ စာလုံးကျော်ခြင်းနှင့် အသံပျက်ခြင်းကို ကာကွယ်ရန် စာသားကြိုတင်ပြင်ဆင်ခြင်း
-                        var cleanedText = preProcessMyanmarText(rawText)
-                        cleanedText = normalizeNumbers(cleanedText)
-                        cleanedText = cleanedText.replace(" ", "")
+                        // စာသားကြိုတင်သန့်စင်ခြင်း
+                        var processedText = preProcessMyanmarText(rawText)
+                        processedText = normalizeNumbers(processedText)
 
-                        val chunks = splitTextIntoChunks(cleanedText)
+                        // 🛠️ ပြုပြင်ချက်- Space နှင့် ပုဒ်ဖြတ်မှုများကို အခြေခံ၍ စနစ်တကျ ဖြတ်တောက်ခြင်း
+                        val chunks = splitTextByPunctuationAndSpace(processedText)
                         val combinedAudioList = mutableListOf<FloatArray>()
 
                         for (chunk in chunks) {
-                            val validChars = chunk.filter { vocabMap.containsKey(it) }
+                            val cleanChunk = chunk.replace(" ", "") // မော်ဒယ်ထဲမထည့်ခင် space ဖြုတ်သည်
+                            val validChars = cleanChunk.filter { vocabMap.containsKey(it) }
                             if (validChars.length < 2) continue
 
                             val tokenList = mutableListOf<Long>()
@@ -176,7 +180,6 @@ class MainActivity : AppCompatActivity() {
                             }
                         }
 
-                        // 🛠️ ၂။ /sdcard/MyanmarTTS/ ဖိုဒါပုံစံအတိုင်း သီးသန့်နေရာတွင် ဖိုင်ထုတ်ခြင်း
                         val sampleRate = 16000
                         val baseDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC)
                         val myanmarTtsDir = File(baseDir, "MyanmarTTS")
@@ -184,18 +187,23 @@ class MainActivity : AppCompatActivity() {
                             myanmarTtsDir.mkdirs()
                         }
                         
-                        val outputFile = File(myanmarTtsDir, "TTS_${System.currentTimeMillis()}.wav")
-                        saveFloatsToWav(outputFile, finalAudioFloats, sampleRate)
+                        // ယာယီ WAV ဖိုင်ဆောက်ခြင်း
+                        val tempWavFile = File(cacheDir, "temp.wav")
+                        saveFloatsToWav(tempWavFile, finalAudioFloats, sampleRate)
 
-                        // နောက်ဆုံးထွက်ဖိုင်လမ်းကြောင်းကို သိမ်းဆည်းခြင်း
-                        lastAudioFilePath = outputFile.absolutePath
+                        // 🛠️ ပြုပြင်ချက်- WAV မှ သေးငယ်ကျစ်လျစ်သော AAC (.m4a) ဖော်မတ်သို့ တိုက်ရိုက်ပြောင်းလဲသိမ်းဆည်းခြင်း
+                        val outputAacFile = File(myanmarTtsDir, "TTS_${System.currentTimeMillis()}.m4a")
+                        convertWavToAac(tempWavFile, outputAacFile)
+                        tempWavFile.delete() // ယာယီဖိုင်အားဖျက်ပယ်ခြင်း
+
+                        lastAudioFilePath = outputAacFile.absolutePath
 
                         runOnUiThread {
                             progressDialog?.dismiss()
-                            Toast.makeText(this@MainActivity, "ဖိုင်ကို Music/MyanmarTTS/ တွင် သိမ်းပြီးပါပြီ", Toast.LENGTH_LONG).show()
+                            Toast.makeText(this@MainActivity, "AAC (.m4a) ဖိုင်ကို Music/MyanmarTTS/ တွင် သိမ်းပြီးပါပြီ", Toast.LENGTH_LONG).show()
                         }
 
-                        // အသံတိုက်ရိုက်လွှင့်ထုတ်ခြင်း
+                        // ဖုန်းထဲတွင် ချက်ချင်းဖွင့်ပြခြင်း
                         val bufferSize = AudioTrack.getMinBufferSize(
                             sampleRate,
                             AudioFormat.CHANNEL_OUT_MONO,
@@ -225,7 +233,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 🛠️ ၃။ နောက်ဆုံးထွက်ထားသော အသံဖိုင်ကို ပြန်လည်နားထောင်သည့် လုပ်ဆောင်ချက်
+        // နောက်ဆုံးထွက်ဖိုင် ပြန်နားထောင်ခြင်း
         playLastButton.setOnClickListener {
             val path = lastAudioFilePath
             if (path != null && File(path).exists()) {
@@ -246,19 +254,17 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // 🛠️ ၄။ စာလုံးကျော်ဖတ်ခြင်းနှင့် "အီ" သံထွက်ခြင်းကို ဖြေရှင်းပေးမည့် စာသားပြုပြင်စနစ်
+    // 🛠️ ပြုပြင်ချက်- "၏" သံကို "၍" သံမထွက်စေဘဲ မှန်ကန်အောင် အသံဖလှယ်ပေးသည့်စနစ်
     private fun preProcessMyanmarText(text: String): String {
         var res = text
-        // မော်ဒယ်ဖတ်ရခက်ခဲသော သင်္ကေတများနှင့် xxxx များကို ဖယ်ရှားခြင်း
         res = res.replace(Regex("[xX._\\-*#+=()_]"), "")
         
-        // ၌၊ ၍၊ ၏၊ ဤ စသည်တို့ကို အသံထွက်အတိုင်း စာသားပြောင်းပေးခြင်း
+        // "၏" အသံကို "အစ်" သို့မဟုတ် စကားစပ်အလိုက် "အဲ" သံထွက်စေရန် ပြောင်းလဲခြင်း
+        res = res.replace("၏", "အစ်")
         res = res.replace("၌", "နှိုက်")
         res = res.replace("၍", "ရွေ့")
-        res = res.replace("၏", "အိ")
         res = res.replace("ဤ", "အီ")
         
-        // ဗျည်းဆင့်စာလုံးများကို မော်ဒယ်ဖတ်နိုင်အောင် အသံထွက်အတိုင်း ယာယီဖြန့်ပေးခြင်း
         res = res.replace("ဘဏ္ဍာ", "ဘန်ဒါ")
         res = res.replace("သဏ္ဌာန်", "သန်ထန်")
         res = res.replace("ဥက္ကာမြဲ", "အုတ်ကာမြဲ")
@@ -266,15 +272,18 @@ class MainActivity : AppCompatActivity() {
         return res
     }
 
-    private fun splitTextIntoChunks(text: String): List<String> {
+    // 🛠️ ပြုပြင်ချက်- စကားစုအလယ်ခေါင်တွင် အလိုအလျောက်ပြတ်မသွားစေဘဲ Space နှင့် ပုဒ်ဖြတ်များအတိုင်း တိကျစွာခွဲထုတ်သည့်စနစ်
+    private fun splitTextByPunctuationAndSpace(text: String): List<String> {
         val chunks = mutableListOf<String>()
-        val regex = Regex("([^။၊\\n]+[။၊\\n]?)")
+        // ပုဒ်မ(။)၊ ကော်မာ(၊)၊ Space( ) နှင့် စာကြောင်းအသစ်(\n) များကိုသာ အခြေခံ၍ တိကျစွာ ဖြတ်တောက်သည်
+        val regex = Regex("([^။၊ \\n]+[။၊ \\n]?)")
         val matches = regex.findAll(text)
         
         var currentChunk = ""
         for (match in matches) {
             val segment = match.value
-            if (currentChunk.length + segment.length > 35) {
+            // စကားစုအလိုက် စုစည်းပြီးမှ စာလုံးရေ ၅၀ ကျော်မှသာ နောက်တစ်ပိုင်း ခွဲထုတ်သည်
+            if (currentChunk.length + segment.length > 50) {
                 if (currentChunk.isNotEmpty()) chunks.add(currentChunk)
                 currentChunk = segment
             } else {
@@ -305,23 +314,17 @@ class MainActivity : AppCompatActivity() {
 
         RandomAccessFile(file, "rw").use { raf ->
             raf.setLength(0) 
-
             raf.writeBytes("RIFF")
             raf.writeInt(Integer.reverseBytes(totalSize))
             raf.writeBytes("WAVE")
-
             raf.writeBytes("fmt ")
             raf.writeInt(Integer.reverseBytes(16)) 
-            
             raf.writeShort(Integer.reverseBytes(3) shr 16 or (Integer.reverseBytes(3) and 0xFFFF)) 
             raf.writeShort(Integer.reverseBytes(1) shr 16 or (Integer.reverseBytes(1) and 0xFFFF)) 
-            
             raf.writeInt(Integer.reverseBytes(sampleRate)) 
             raf.writeInt(Integer.reverseBytes(sampleRate * 4)) 
-            
             raf.writeShort(Integer.reverseBytes(4) shr 16 or (Integer.reverseBytes(4) and 0xFFFF)) 
             raf.writeShort(Integer.reverseBytes(32) shr 16 or (Integer.reverseBytes(32) and 0xFFFF)) 
-
             raf.writeBytes("data")
             raf.writeInt(Integer.reverseBytes(payloadSize))
 
@@ -331,6 +334,86 @@ class MainActivity : AppCompatActivity() {
             }
             raf.write(byteBuffer.array())
         }
+    }
+
+    // 🛠️ စွမ်းဆောင်ရည်မြင့်မားပြီး အသံဖိုင်အရွယ်အစားကို အဆမတန် သေးငယ်စေမည့် WAV to AAC (.m4a) Converter စနစ်
+    private fun convertWavToAac(wavFile: File, aacFile: File) {
+        val fis = FileInputStream(wavFile)
+        // WAV Header 44 bytes ကို ကျော်ခွပစ်ခြင်း
+        fis.skip(44)
+
+        val fos = FileOutputStream(aacFile)
+        
+        val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
+        val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, 16000, 1).apply {
+            setInteger(MediaFormat.KEY_BIT_RATE, 64000)
+            setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
+            setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 1024 * 10)
+        }
+        
+        codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+        codec.start()
+
+        val inputBuffers = codec.inputBuffers
+        val outputBuffers = codec.outputBuffers
+        val bufferInfo = MediaCodec.BufferInfo()
+        
+        val rawBuffer = ByteArray(4 * 1024)
+        var hasMoreData = true
+        var isEOS = false
+
+        while (!isEOS) {
+            if (hasMoreData) {
+                val inputBufferIndex = codec.dequeueInputBuffer(10000)
+                if (inputBufferIndex >= 0) {
+                    val inputBuffer = inputBuffers[inputBufferIndex]
+                    inputBuffer.clear()
+                    val bytesRead = fis.read(rawBuffer)
+                    if (bytesRead == -1) {
+                        hasMoreData = false
+                        codec.queueInputBuffer(inputBufferIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                    } else {
+                        inputBuffer.put(rawBuffer, 0, bytesRead)
+                        codec.queueInputBuffer(inputBufferIndex, 0, bytesRead, 0, 0)
+                    }
+                }
+            }
+
+            var outputBufferIndex = codec.dequeueOutputBuffer(bufferInfo, 10000)
+            while (outputBufferIndex >= 0) {
+                if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
+                    isEOS = true
+                }
+                val outputBuffer = outputBuffers[outputBufferIndex]
+                outputBuffer.position(bufferInfo.offset)
+                outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
+                
+                // ADTS Header လောင်းထည့်ပြီး AAC သို့ တိုက်ရိုက်ပြောင်းလဲသိမ်းဆည်းခြင်း
+                val outBitsSize = bufferInfo.size
+                val packetSize = outBitsSize + 7
+                val adtsHeader = ByteArray(7)
+                adtsHeader[0] = 0xFF.toByte()
+                adtsHeader[1] = 0xF1.toByte()
+                adtsHeader[2] = (((0 certification 1) shl 6) + ( certification 4 shl 2) + (1 shl 1)).toByte()
+                adtsHeader[3] = (((1 shl 6) + (packetSize shr 11)).toByte())
+                adtsHeader[4] = ((packetSize and 0x7FF) shr 3).toByte()
+                adtsHeader[5] = (((packetSize and 7) shl 5) + 0x1F).toByte()
+                adtsHeader[6] = 0xFC.toByte()
+
+                fos.write(adtsHeader)
+                val outData = ByteArray(bufferInfo.size)
+                outputBuffer.get(outData)
+                fos.write(outData)
+
+                codec.releaseOutputBuffer(outputBufferIndex, false)
+                outputBufferIndex = codec.dequeueOutputBuffer(bufferInfo, 0)
+            }
+        }
+
+        codec.stop()
+        codec.release()
+        fis.close()
+        fos.close()
     }
 
     override fun onDestroy() {

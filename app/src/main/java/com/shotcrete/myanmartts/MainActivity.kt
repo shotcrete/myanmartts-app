@@ -101,7 +101,6 @@ class MainActivity : AppCompatActivity() {
 
                 thread(start = true) {
                     try {
-                        // 🛠️ စာသားများအား မော်ဒယ်အသံထွက် အမှန်ကန်ဆုံးဖြစ်အောင် သန့်စင်ခြင်း
                         var processedText = preProcessMyanmarText(rawText)
                         processedText = normalizeNumbers(processedText)
 
@@ -172,7 +171,6 @@ class MainActivity : AppCompatActivity() {
                             destPos += audioChunk.size
                         }
 
-                        // Volume Normalization
                         var maxVal = 0.0f
                         for (f in finalAudioFloats) {
                             val absF = if (f < 0) -f else f
@@ -192,11 +190,9 @@ class MainActivity : AppCompatActivity() {
                             myanmarTtsDir.mkdirs()
                         }
                         
-                        // ယာယီ PCM ဖိုင်တည်ဆောက်ခြင်း
                         val tempPcmFile = File(cacheDir, "temp.pcm")
                         saveFloatsToPcm16(tempPcmFile, finalAudioFloats)
 
-                        // 🛠️ ပြုပြင်ချက်- MediaMuxer သို့ PCM16 စစ်စစ်ထည့်သွင်း၍ ကြည်လင်သော AAC ဖိုင်ထုတ်ခြင်း
                         val outputAacFile = File(myanmarTtsDir, "TTS_${System.currentTimeMillis()}.m4a")
                         convertPcmToAacMuxer(tempPcmFile, outputAacFile, sampleRate)
                         tempPcmFile.delete() 
@@ -208,7 +204,6 @@ class MainActivity : AppCompatActivity() {
                             Toast.makeText(this@MainActivity, "ဖိုင်ကို Music/MyanmarTTS/ တွင် သိမ်းပြီးပါပြီ", Toast.LENGTH_LONG).show()
                         }
 
-                        // ဖုန်းတွင် အသံချက်ချင်း တိုက်ရိုက်လွှင့်ထုတ်ခြင်း
                         val bufferSize = AudioTrack.getMinBufferSize(
                             sampleRate,
                             AudioFormat.CHANNEL_OUT_MONO,
@@ -258,18 +253,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // 🛠️ ပြုပြင်ချက်- "၎င်း" ၊ "၏" နှင့် "ပြဿနာ" သံများ အမှားကင်းစေရန် အသံဖလှယ်ပုံစနစ် ပြောင်းလဲခြင်း
     private fun preProcessMyanmarText(text: String): String {
         var res = text
         res = res.replace(Regex("[xX._\\-*#+=()_]"), "")
         
-        // ၎င်း ကို "လင်း" သို့မဟုတ် "လန်း" သံထွက်မသွားစေဘဲ "ဒင်း" (သို့) "၎င်း" အသံထွက်အတိုင်း စာသားပြောင်းပေးခြင်း
-        res = res.replace("၎င်း", "ဒင်း")
+        // 🛠️ FIX: "၎င်း" ကို "လဂေါင်း" သို့ အစ်ကို့ဆန္ဒအတိုင်း ပြောင်းလဲပေးလိုက်ပါပြီ
+        res = res.replace("၎င်း", "လဂေါင်း")
         
-        // ၏ ကို "တယ်" သို့မဟုတ် "ဒီ" ဟု ပြောင်းလဲခြင်းဖြင့် ၍ သံထွက်ခြင်းကို အပြီးတိုင် ဖြေရှင်းခြင်း
         res = res.replace("ဖြစ်၏", "ဖြစ်တယ်") 
         res = res.replace("၏", "အီး")
-        
         res = res.replace("၌", "နှိုက်")
         res = res.replace("၍", "ရွေ့")
         res = res.replace("ဤ", "အီ")
@@ -313,12 +305,10 @@ class MainActivity : AppCompatActivity() {
         return res
     }
 
-    // Float32 မှ Int16 သို့ တိကျစွာ Byte Mapping ပြုလုပ်၍ PCM ဖိုင်သိမ်းဆည်းခြင်း
     private fun saveFloatsToPcm16(file: File, floatData: FloatArray) {
         val fos = FileOutputStream(file)
         val byteBuffer = ByteBuffer.allocate(floatData.size * 2).order(ByteOrder.LITTLE_ENDIAN)
         for (f in floatData) {
-            // Float (-1.0 to 1.0) မှ Short (-32768 to 32767) သို့ ပြောင်းလဲခြင်း
             var s = (f * 32767.0f).toInt()
             if (s > 32767) s = 32767
             if (s < -32768) s = -32768
@@ -328,7 +318,6 @@ class MainActivity : AppCompatActivity() {
         fos.close()
     }
 
-    // 🛠️ ပြုပြင်ချက်- PCM16 လမ်းကြောင်းမှ ဝင်လာသော Data အား Noise ကင်းစင်စွာဖြင့် AAC (.m4a) အဖြစ် ပြောင်းလဲခြင်း
     private fun convertPcmToAacMuxer(pcmFile: File, aacFile: File, sampleRate: Int) {
         val fis = FileInputStream(pcmFile)
         val muxer = MediaMuxer(aacFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
@@ -365,7 +354,6 @@ class MainActivity : AppCompatActivity() {
                     } else {
                         inputBuffer.put(rawBuffer, 0, bytesRead)
                         codec.queueInputBuffer(inputBufferIndex, 0, bytesRead, presentationTimeUs, 0)
-                        // PCM 16-bit Mono (1 sample = 2 bytes) အခြေခံဖြင့် အချိန်တွက်ချက်ခြင်း
                         presentationTimeUs += (bytesRead / 2) * 1000000L / sampleRate.toLong()
                     }
                 }

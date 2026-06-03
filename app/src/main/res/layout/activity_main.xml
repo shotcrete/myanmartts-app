@@ -11,7 +11,7 @@
         android:layout_height="0dp"
         android:layout_weight="1"
         android:gravity="top"
-        android:hint="အသံပြောင်းလိုသော စာသားများကို စာအရှည်ကြီး Paste ချနိုင်ပါသည်..."
+        android:hint="အသံပြောင်းလိုသော မြန်မာစာသားများကို ဤနေရာတွင် Paste ချပါ..."
         android:inputType="textMultiLine"
         android:scrollbars="vertical"
         android:background="@android:drawable/editbox_background"
@@ -24,4 +24,13 @@
         android:layout_marginTop="12dp"
         android:text="မြန်မာအသံပြောင်းမည်"
         android:textSize="16sp" />
+
+    <Button
+        android:id="@+id/playLastButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="နောက်ဆုံးဖိုင် ပြန်ဖွင့်မည်"
+        android:textSize="16sp"
+        android:backgroundTint="#4CAF50" />
 </LinearLayout>

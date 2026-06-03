@@ -15,12 +15,14 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.HashMap
 import kotlin.concurrent.thread
+import kotlin.math.max
+import kotlin.math.min
 
 class MainActivity : AppCompatActivity() {
     private var ortEnv: OrtEnvironment? = null
     private var ortSession: OrtSession? = null
 
-    // vocab.json အတိုင်း စာလုံးတစ်ခုချင်းစီရဲ့ ID အစစ်အမှန်များ
+    // vocab.json အတိုင်း ကွက်တိသတ်မှတ်ထားသော ID များ
     private val vocabMap = mapOf(
         '်' to 0L, 'ာ' to 1L, 'ု' to 2L, 'ိ' to 3L, 'း' to 4L, 'ေ' to 5L, 'သ' to 6L, 'က' to 7L,
         'င' to 8L, 'တ' to 9L, '့' to 10L, 'မ' to 11L, 'ြ' to 12L, 'ည' to 13L, 'ရ' to 14L, 'အ' to 15L,
@@ -39,7 +41,7 @@ class MainActivity : AppCompatActivity() {
         val inputText = findViewById<EditText>(R.id.inputText)
         val speakButton = findViewById<Button>(R.id.speakButton)
 
-        // ၁။ Engine စတင်နှိုးခြင်း
+        // ၁။ ONNX Core Engine အား နောက်ကွယ်မှ နှိုးခြင်း
         thread(start = true) {
             try {
                 ortEnv = OrtEnvironment.getEnvironment()
@@ -81,20 +83,31 @@ class MainActivity : AppCompatActivity() {
 
                 thread(start = true) {
                     try {
-                        // vocabMap ထဲမပါသော စာလုံးတွေ့ပါက index အလွန်မဖြစ်စေရန် space (56L) သို့ ပြောင်းလဲပစ်ခြင်း
-                        val inputSequence = LongArray(text.length) { i ->
-                            vocabMap[text[i]] ?: 56L
+                        // Python သတ်မှတ်ချက်အတိုင်း Space ဖယ်ထုတ်ခြင်း
+                        val cleanText = text.replace(" ", "")
+                        
+                        // ၂။ Hugging Face တရားဝင် VitsTokenizer အလုပ်လုပ်ပုံအတိုင်း Interspersed Pad (0L) စနစ်တည်ဆောက်ခြင်း
+                        // စာလုံးတစ်လုံးစီ၏ ကြားထဲတွင် Pad Token (0L) ကို ညှပ်ထည့်ပေးရပါသည်
+                        val tokenList = mutableListOf<Long>()
+                        tokenList.add(0L) // ရှေ့ဆုံး Pad
+                        for (i in cleanText.indices) {
+                            val id = vocabMap[cleanText[i]] ?: 56L // မတွေ့ပါက space id ပေးမည်
+                            tokenList.add(id)
+                            tokenList.add(0L) // ကြား/နောက် Pad
                         }
+
+                        val inputSequence = tokenList.toLongArray()
                         val inputShape = longArrayOf(1, inputSequence.size.toLong())
 
-                        // Base Tensors များ တည်ဆောက်ခြင်း
+                        // Tensors များ အသင့်ပြင်ဆင်ခြင်း
                         val inputTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(inputSequence), inputShape)
                         val lengthTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(inputSequence.size.toLong())), longArrayOf(1))
-                        val maskSequence = LongArray(text.length) { 1L }
+                        
+                        val maskSequence = LongArray(inputSequence.size) { 1L }
                         val maskTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(maskSequence), inputShape)
                         val speakerTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(0L)), longArrayOf(1))
 
-                        // မော်ဒယ်အစစ်အမှန်က တောင်းဆိုထားသော နာမည်များကိုသာ စစ်ထုတ်ပြီး ကွက်တိထည့်ပေးခြင်း
+                        // မော်ဒယ်လိုအပ်ချက်များကို Dynamic စစ်ထုတ်ထည့်သွင်းခြင်း
                         val inputMap = HashMap<String, OnnxTensor>()
                         val expectedInputNames = session.inputNames
 
@@ -107,15 +120,31 @@ class MainActivity : AppCompatActivity() {
                             }
                         }
 
-                        // မော်ဒယ်ထဲ ကုဒ်ပတ်ခြင်း (Inference)
+                        // ၃။ Model Inference မောင်းနှင်ခြင်း
                         val results = session.run(inputMap)
                         val outputTensor = results.get(0) as OnnxTensor
                         
                         val floatBuffer = outputTensor.floatBuffer
                         val audioFloats = FloatArray(floatBuffer.remaining())
                         floatBuffer.get(audioFloats)
+
+                        // ၄။ အသံတိုးခြင်းနှင့် အရှိန်လွန်မြန်ခြင်းတို့အား ဒေတာပြုပြင်ထိန်းချုပ်မှုဖြင့် ကုစားခြင်း
+                        // Float Waveform အား စံချိန်ကိုက် အသံမြှင့်တင်ပေးခြင်း (Volume Normalization)
+                        var maxVal = 0.0f
+                        for (f in audioFloats) {
+                            val absF = if (f < 0) -f else f
+                            if (absF > maxVal) maxVal = absF
+                        }
                         
-                        // config.json အရ sampling_rate = 16000Hz
+                        // အသံတိုးလွန်းခြင်းမှ ကာကွယ်ရန် သင့်တော်သော Gain နှုန်းဖြင့် မြှင့်တင်ခြင်း
+                        if (maxVal > 0) {
+                            val gain = 0.8f / maxVal
+                            for (i in audioFloats.indices) {
+                                audioFloats[i] = audioFloats[i] * gain
+                            }
+                        }
+
+                        // ၅။ ၁၆၀၀၀ Hz စနစ်ဖြင့် အသံလွှင့်ထုတ်ခြင်း
                         val sampleRate = 16000 
                         val bufferSize = AudioTrack.getMinBufferSize(
                             sampleRate,
@@ -135,7 +164,7 @@ class MainActivity : AppCompatActivity() {
                         audioTrack.play()
                         audioTrack.write(audioFloats, 0, audioFloats.size, AudioTrack.WRITE_BLOCKING)
                         
-                        // Tensor များ ပြန်ပိတ်ခြင်း
+                        // ပိတ်သိမ်းခြင်း
                         inputTensor.close()
                         lengthTensor.close()
                         maskTensor.close()

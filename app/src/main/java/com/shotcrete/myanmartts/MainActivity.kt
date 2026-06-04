@@ -47,7 +47,7 @@ class MainActivity : AppCompatActivity() {
         ' ' to 56L
     )
 
-    // အင်္ဂလိပ် Vocab Map (Piper Ryan Low)
+    // အင်္ဂလိပ် Vocab Map
     private val vocabMapEn = mapOf(
         '_' to 0L, '^' to 1L, '$' to 2L, ' ' to 3L, '!' to 4L, '\'' to 5L, ',' to 6L, '-' to 7L,
         '.' to 8L, ';' to 9L, '?' to 10L, 'a' to 11L, 'b' to 12L, 'd' to 13L, 'e' to 14L, 'f' to 15L,
@@ -72,23 +72,32 @@ class MainActivity : AppCompatActivity() {
             setCancelable(false)
         }
 
-        // 🚀 လုံးဝ Offline မော်ဒယ်နှစ်ခုလုံးအား Assets မှ တိုက်ရိုက်နှိုးခြင်း
+        // 🚀 Engine နှိုးခြင်းစနစ် (Assets ထဲက နာမည်အတိုင်း တိုက်ရိုက်ခေါ်ယူသည်)
         thread(start = true) {
             try {
                 ortEnv = OrtEnvironment.getEnvironment()
                 
-                // ၁။ မြန်မာမော်ဒယ်အား Assets မှ ယူခြင်း
+                // ၁။ မြန်မာမော်ဒယ်
                 val modelFileMm = File(cacheDir, "model.onnx")
                 if (!modelFileMm.exists()) copyAssetToFile("model.onnx", modelFileMm)
                 ortSessionMm = ortEnv?.createSession(modelFileMm.absolutePath)
 
-                // ၂။ အင်္ဂလိပ်မော်ဒယ်အား Assets မှ ယူခြင်း
+                // ၂။ အင်္ဂလိပ်မော်ဒယ် (63.1MB ဖိုင်အား Assets ထဲရှိ နာမည်အတိုင်း တင်ခြင်း)
                 val modelFileEn = File(cacheDir, "en_model.onnx")
-                if (!modelFileEn.exists()) copyAssetToFile("en_model.onnx", modelFileEn)
-                ortSessionEn = ortEnv?.createSession(modelFileEn.absolutePath)
+                
+                // အကယ်၍ Assets ထဲတွင် en_model.onnx.json ဟု အစ်ကိုပေးထားပါက ၎င်းနာမည်အတိုင်း copy ကူးယူရန်
+                if (assets.list("")?.contains("en_model.onnx.json") == true) {
+                    if (!modelFileEn.exists()) copyAssetToFile("en_model.onnx.json", modelFileEn)
+                } else if (assets.list("")?.contains("en_model.onnx") == true) {
+                    if (!modelFileEn.exists()) copyAssetToFile("en_model.onnx", modelFileEn)
+                }
+                
+                if (modelFileEn.exists()) {
+                    ortSessionEn = ortEnv?.createSession(modelFileEn.absolutePath)
+                }
 
                 runOnUiThread {
-                    Toast.makeText(this@MainActivity, "မြန်မာ + အင်္ဂလိပ် Offline Engine အဆင်သင့်ဖြစ်ပါပြီဗျာ", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, "မြန်မာ + အင်္ဂလိပ် Engine အဆင်သင့်ဖြစ်ပါပြီဗျာ", Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
                 runOnUiThread {
@@ -101,8 +110,8 @@ class MainActivity : AppCompatActivity() {
             val rawText = inputText.text.toString().trim()
             if (rawText.isNotEmpty()) {
                 val env = ortEnv
-                if (ortSessionMm == null || ortSessionEn == null || env == null) {
-                    Toast.makeText(this, "Engines များ အဆင်သင့်မဖြစ်သေးပါ...", Toast.LENGTH_SHORT).show()
+                if (ortSessionMm == null || env == null) {
+                    Toast.makeText(this, "မြန်မာ Engine အဆင်သင့်မဖြစ်သေးပါ...", Toast.LENGTH_SHORT).show()
                     return@setOnClickListener
                 }
 
@@ -114,116 +123,62 @@ class MainActivity : AppCompatActivity() {
                         val combinedAudioList = mutableListOf<FloatArray>()
 
                         for (segment in textSegments) {
-                            if (segment.isEnglish) {
-                                // 🇬🇧 English Engine Pipeline
-                                val phonemes = textToPhonemes(segment.text)
-                                val tokenList = mutableListOf<Long>()
-                                tokenList.add(1L) // ^
-                                for (ch in phonemes) {
-                                    tokenList.add(vocabMapEn[ch] ?: 3L) 
-                                }
-                                tokenList.add(2L) // $
+                            if (segment.isEnglish && ortSessionEn != null) {
+                                try {
+                                    val phonemes = textToPhonemes(segment.text)
+                                    val tokenList = mutableListOf<Long>()
+                                    tokenList.add(1L) 
+                                    for (ch in phonemes) { tokenList.add(vocabMapEn[ch] ?: 3L) }
+                                    tokenList.add(2L) 
 
-                                val inputSequence = tokenList.toLongArray()
-                                if (inputSequence.size < 3) continue
+                                    val inputSequence = tokenList.toLongArray()
+                                    if (inputSequence.size < 3) continue
 
-                                val inputShape = longArrayOf(1, inputSequence.size.toLong())
+                                    val inputShape = longArrayOf(1, inputSequence.size.toLong())
+                                    val longBufferInput = java.nio.LongBuffer.wrap(inputSequence)
+                                    val longBufferLength = java.nio.LongBuffer.wrap(longArrayOf(inputSequence.size.toLong()))
+                                    
+                                    // 💡 Attention Mask Tensor အား Input ပမာဏအတိုင်း အပြည့်တည်ဆောက်ခြင်း
+                                    val attentionMaskSequence = LongArray(inputSequence.size) { 1L }
+                                    val longBufferMask = java.nio.LongBuffer.wrap(attentionMaskSequence)
 
-                                val longBufferInput = java.nio.LongBuffer.wrap(inputSequence)
-                                val longBufferLength = java.nio.LongBuffer.wrap(longArrayOf(inputSequence.size.toLong()))
+                                    val inputTensor = OnnxTensor.createTensor(env, longBufferInput, inputShape)
+                                    val lengthTensor = OnnxTensor.createTensor(env, longBufferLength, longArrayOf(1))
+                                    val maskTensor = OnnxTensor.createTensor(env, longBufferMask, inputShape)
+                                    val scalesTensor = OnnxTensor.createTensor(env, java.nio.FloatBuffer.wrap(floatArrayOf(0.667f, 1.0f, 0.8f)), longArrayOf(3))
 
-                                // 💡 Dynamic Attention Mask Array တည်ဆောက်ခြင်း
-                                val attentionMaskSequence = LongArray(inputSequence.size) { 1L }
-                                val longBufferMask = java.nio.LongBuffer.wrap(attentionMaskSequence)
-
-                                val inputTensor = OnnxTensor.createTensor(env, longBufferInput, inputShape)
-                                val lengthTensor = OnnxTensor.createTensor(env, longBufferLength, longArrayOf(1))
-                                val maskTensor = OnnxTensor.createTensor(env, longBufferMask, inputShape)
-                                val scalesTensor = OnnxTensor.createTensor(env, java.nio.FloatBuffer.wrap(floatArrayOf(0.667f, 1.0f, 0.8f)), longArrayOf(3))
-
-                                val inputMap = HashMap<String, OnnxTensor>()
-                                
-                                // 💡 [အဓိကပြင်ဆင်ချက်] မော်ဒယ်ရဲ့ Input Node နာမည်တွေက ဘယ်လိုပဲကွဲကွဲ အော်တိုကွက်တိ Map လုပ်ပေးမည့် စနစ်
-                                ortSessionEn?.inputNames?.forEach { name ->
-                                    when {
-                                        name == "input" || name == "input_ids" || name.contains("input_ids") -> {
-                                            inputMap[name] = inputTensor
-                                        }
-                                        name.contains("length") -> {
-                                            inputMap[name] = lengthTensor
-                                        }
-                                        name.contains("scale") -> {
-                                            inputMap[name] = scalesTensor
-                                        }
-                                        else -> {
-                                            // မော်ဒယ်တောင်းဆိုသမျှ ကျန်ရှိသော Node နာမည်တိုင်းကို attention_mask အဖြစ် သတ်မှတ်ပေးလိုက်ခြင်း
-                                            inputMap[name] = maskTensor
+                                    val inputMap = HashMap<String, OnnxTensor>()
+                                    
+                                    // 💡 [အဓိကပြင်ဆင်ချက်] မော်ဒယ်က တောင်းဆိုသမျှ Input keys အားလုံးကို တိတိကျကျ စစ်ဆေးထည့်သွင်းခြင်း
+                                    ortSessionEn?.inputNames?.forEach { name ->
+                                        when {
+                                            name.contains("input") || name == "input_ids" -> inputMap[name] = inputTensor
+                                            name.contains("length") -> inputMap[name] = lengthTensor
+                                            name.contains("scale") -> inputMap[name] = scalesTensor
+                                            // attention_mask, attention_mask.1 သို့မဟုတ် အခြားသော mask node မှန်သမျှအားလုံးထဲသို့ maskTensor ထည့်ပေးခြင်း
+                                            else -> inputMap[name] = maskTensor 
                                         }
                                     }
-                                }
 
-                                val results = ortSessionEn?.run(inputMap)
-                                val outputTensor = results?.get(0) as? OnnxTensor
-                                outputTensor?.let {
-                                    val floatBuffer = it.floatBuffer
-                                    val audioFloats = FloatArray(floatBuffer.remaining())
-                                    floatBuffer.get(audioFloats)
-                                    combinedAudioList.add(audioFloats)
+                                    val results = ortSessionEn?.run(inputMap)
+                                    val outputTensor = results?.get(0) as? OnnxTensor
+                                    outputTensor?.let {
+                                        val floatBuffer = it.floatBuffer
+                                        val audioFloats = FloatArray(floatBuffer.remaining())
+                                        floatBuffer.get(audioFloats)
+                                        combinedAudioList.add(audioFloats)
+                                    }
+                                    inputTensor.close()
+                                    lengthTensor.close()
+                                    maskTensor.close()
+                                    scalesTensor.close()
+                                    results?.close()
+                                } catch (e: Exception) {
+                                    // Error တက်ပါက မြန်မာအင်ဂျင်သို့ လွှဲပြောင်းဖတ်ခိုင်းခြင်း
+                                    runMyanmarPipeline(segment.text, env, combinedAudioList)
                                 }
-                                inputTensor.close()
-                                lengthTensor.close()
-                                maskTensor.close()
-                                scalesTensor.close()
-                                results?.close()
-
                             } else {
-                                // 🇲🇲 Myanmar Engine Pipeline
-                                var processedText = preProcessMyanmarText(segment.text)
-                                processedText = normalizeNumbers(processedText)
-
-                                val cleanChunk = processedText.replace(" ", "")
-                                val validChars = cleanChunk.filter { vocabMapMm.containsKey(it) }
-                                if (validChars.length < 2) continue
-
-                                val tokenList = mutableListOf<Long>()
-                                tokenList.add(0L)
-                                for (i in validChars.indices) {
-                                    val id = vocabMapMm[validChars[i]] ?: 56L
-                                    if (id in 0L..56L) {
-                                        tokenList.add(id)
-                                        tokenList.add(0L)
-                                    }
-                                }
-
-                                val inputSequence = tokenList.toLongArray()
-                                if (inputSequence.isEmpty()) continue
-
-                                val inputShape = longArrayOf(1, inputSequence.size.toLong())
-                                val inputTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(inputSequence), inputShape)
-                                val lengthTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(inputSequence.size.toLong())), longArrayOf(1))
-                                val scalesTensor = OnnxTensor.createTensor(env, java.nio.FloatBuffer.wrap(floatArrayOf(0.667f, 1.0f, 0.8f)), longArrayOf(3))
-
-                                val inputMap = HashMap<String, OnnxTensor>()
-                                ortSessionMm?.inputNames?.forEach { name ->
-                                    when {
-                                        name == "input" || name.contains("input_ids") -> inputMap[name] = inputTensor
-                                        name.contains("input_lengths") || name.contains("lengths") -> inputMap[name] = lengthTensor
-                                        name.contains("scales") || name.contains("scale") -> inputMap[name] = scalesTensor
-                                    }
-                                }
-
-                                val results = ortSessionMm?.run(inputMap)
-                                val outputTensor = results?.get(0) as? OnnxTensor
-                                outputTensor?.let {
-                                    val floatBuffer = it.floatBuffer
-                                    val audioFloats = FloatArray(floatBuffer.remaining())
-                                    floatBuffer.get(audioFloats)
-                                    combinedAudioList.add(audioFloats)
-                                }
-                                inputTensor.close()
-                                lengthTensor.close()
-                                scalesTensor.close()
-                                results?.close()
+                                runMyanmarPipeline(segment.text, env, combinedAudioList)
                             }
                         }
 
@@ -269,7 +224,7 @@ class MainActivity : AppCompatActivity() {
 
                         runOnUiThread {
                             progressDialog?.dismiss()
-                            Toast.makeText(this@MainActivity, "Hybrid အသံဖိုင် ထွက်လာပါပြီခင်ဗျာ", Toast.LENGTH_LONG).show()
+                            Toast.makeText(this@MainActivity, "Hybrid အသံထွက်လာပါပြီဗျာ", Toast.LENGTH_LONG).show()
                         }
 
                         val bufferSize = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_FLOAT)
@@ -304,6 +259,55 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    private fun runMyanmarPipeline(text: String, env: OrtEnvironment, combinedAudioList: MutableList<FloatArray>) {
+        var processedText = preProcessMyanmarText(text)
+        processedText = normalizeNumbers(processedText)
+
+        val cleanChunk = processedText.replace(" ", "")
+        val validChars = cleanChunk.filter { vocabMapMm.containsKey(it) }
+        if (validChars.length < 2) return
+
+        val tokenList = mutableListOf<Long>()
+        tokenList.add(0L)
+        for (i in validChars.indices) {
+            val id = vocabMapMm[validChars[i]] ?: 56L
+            if (id in 0L..56L) {
+                tokenList.add(id)
+                tokenList.add(0L)
+            }
+        }
+
+        val inputSequence = tokenList.toLongArray()
+        if (inputSequence.isEmpty()) return
+
+        val inputShape = longArrayOf(1, inputSequence.size.toLong())
+        val inputTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(inputSequence), inputShape)
+        val lengthTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(inputSequence.size.toLong())), longArrayOf(1))
+        val scalesTensor = OnnxTensor.createTensor(env, java.nio.FloatBuffer.wrap(floatArrayOf(0.667f, 1.0f, 0.8f)), longArrayOf(3))
+
+        val inputMap = HashMap<String, OnnxTensor>()
+        ortSessionMm?.inputNames?.forEach { name ->
+            when {
+                name == "input" || name.contains("input_ids") -> inputMap[name] = inputTensor
+                name.contains("input_lengths") || name.contains("lengths") -> inputMap[name] = lengthTensor
+                name.contains("scales") || name.contains("scale") -> inputMap[name] = scalesTensor
+            }
+        }
+
+        val results = ortSessionMm?.run(inputMap)
+        val outputTensor = results?.get(0) as? OnnxTensor
+        outputTensor?.let {
+            val floatBuffer = it.floatBuffer
+            val audioFloats = FloatArray(floatBuffer.remaining())
+            floatBuffer.get(audioFloats)
+            combinedAudioList.add(audioFloats)
+        }
+        inputTensor.close()
+        lengthTensor.close()
+        scalesTensor.close()
+        results?.close()
     }
 
     data class LangSegment(val text: String, val isEnglish: Boolean)
@@ -351,7 +355,6 @@ class MainActivity : AppCompatActivity() {
         res = res.replace("ဤ", "အီ")
         res = res.replace("ဘဏ္ဍာ", "ဘန်ဒါ")
         res = res.replace("သဏ္ဌာန်", "သန်ထန်")
-        res = res.replace("ဥက္ကာမြဲ", "အုတ်ကာမြဲ")
         if (!res.endsWith(" ")) res = "$res   "
         return res
     }

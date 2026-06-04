@@ -72,27 +72,35 @@ class MainActivity : AppCompatActivity() {
             setCancelable(false)
         }
 
-        // 🚀 Engine တင်ခြင်းစနစ်
+        // 🚀 Engine တင်ခြင်းစနစ် (Assets ဖိုင်အမည် အမှန်အတိုင်း ပြင်ဆင်ထားသည်)
         thread(start = true) {
             try {
                 ortEnv = OrtEnvironment.getEnvironment()
                 
                 // ၁။ မြန်မာမော်ဒယ်
                 val modelFileMm = File(cacheDir, "model.onnx")
-                if (!modelFileMm.exists()) copyAssetToFile("model.onnx", modelFileMm)
+                if (!modelFileMm.exists() || modelFileMm.length() < 10_000_000) {
+                    if (modelFileMm.exists()) modelFileMm.delete()
+                    copyAssetToFile("model.onnx", modelFileMm)
+                }
                 ortSessionMm = ortEnv?.createSession(modelFileMm.absolutePath)
 
-                // ၂။ အင်္ဂလိပ်မော်ဒယ် (Assets ထဲရှိ နာမည်အတိုင်း စစ်ဆေးယူသည်)
+                // ၂။ အင်္ဂလိပ်မော်ဒယ် 
                 val modelFileEn = File(cacheDir, "en_model.onnx")
-                val assetList = assets.list("")?.toList() ?: emptyList()
                 
-                if (assetList.contains("en_model.onnx.json")) {
-                    if (!modelFileEn.exists()) copyAssetToFile("en_model.onnx.json", modelFileEn)
-                } else if (assetList.contains("en_model.onnx")) {
-                    if (!modelFileEn.exists()) copyAssetToFile("en_model.onnx", modelFileEn)
+                // GitHub ပေါ်က အစ်ကို့ရဲ့ ဖိုင်အမည် 'en_model.onnx.json' ကို တိုက်ရိုက် Cache ထဲ ကူးထည့်မည်
+                if (!modelFileEn.exists() || modelFileEn.length() < 10_000_000) {
+                    if (modelFileEn.exists()) modelFileEn.delete()
+                    
+                    val assetList = assets.list("")?.toList() ?: emptyList()
+                    if (assetList.contains("en_model.onnx.json")) {
+                        copyAssetToFile("en_model.onnx.json", modelFileEn)
+                    } else {
+                        copyAssetToFile("en_model.onnx", modelFileEn)
+                    }
                 }
                 
-                if (modelFileEn.exists()) {
+                if (modelFileEn.exists() && modelFileEn.length() > 10_000_000) {
                     ortSessionEn = ortEnv?.createSession(modelFileEn.absolutePath)
                 }
 
@@ -100,6 +108,7 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(this@MainActivity, "မြန်မာ + အင်္ဂလိပ် Engine အဆင်သင့်ဖြစ်ပါပြီဗျာ", Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
+                e.printStackTrace()
                 runOnUiThread {
                     Toast.makeText(this@MainActivity, "Engine Loading Error: ${e.message}", Toast.LENGTH_LONG).show()
                 }
@@ -141,15 +150,16 @@ class MainActivity : AppCompatActivity() {
                                     val lengthTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(inputSequence.size.toLong())), singleShape)
                                     val scalesTensor = OnnxTensor.createTensor(env, java.nio.FloatBuffer.wrap(floatArrayOf(0.667f, 1.0f, 0.8f)), longArrayOf(3))
                                     
+                                    // 💡 attention_mask အတွက် Input Size အတိုင်း 1L တွေ ချပေးခြင်း
                                     val attentionMaskSequence = LongArray(inputSequence.size) { 1L }
                                     val maskTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(attentionMaskSequence), inputShape)
                                     
-                                    // Multi-speaker model များအတွက် Speaker ID (Default = 0)
+                                    // Multi-speaker ဖြစ်ခဲ့ရင် သုံးဖို့ Speaker ID (Default = 0)
                                     val sidTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(0L)), singleShape)
 
                                     val inputMap = HashMap<String, OnnxTensor>()
                                     
-                                    // 💡 [အဓိကပြင်ဆင်ချက်] သက်ဆိုင်ရာ Input Parameter အလိုက် ကွက်တိ Mapping လုပ်ခြင်း
+                                    // 💡 [အဓိကပြင်ဆင်ချက်] မော်ဒယ် တောင်းဆိုနေတဲ့ attention_mask ရော အခြား parameter များကိုပါ အတိအကျတိုက်စစ်ပြီးထည့်သွင်းခြင်း
                                     ortSessionEn?.inputNames?.forEach { name ->
                                         when {
                                             name == "input" || name == "input_ids" || name.contains("input_ids") -> {
@@ -179,7 +189,6 @@ class MainActivity : AppCompatActivity() {
                                         combinedAudioList.add(audioFloats)
                                     }
                                     
-                                    // Tensor များကို စနစ်တကျ ပြန်ပိတ်ခြင်း
                                     inputTensor.close()
                                     lengthTensor.close()
                                     scalesTensor.close()
@@ -187,7 +196,7 @@ class MainActivity : AppCompatActivity() {
                                     sidTensor.close()
                                     results?.close()
                                 } catch (e: Exception) {
-                                    // English Engine တွင် Error တက်ပါက App Crash မဖြစ်စေဘဲ မြန်မာသံဖြင့် အစားထိုးဖတ်ပေးမည်
+                                    e.printStackTrace()
                                     runMyanmarPipeline(segment.text, env, combinedAudioList)
                                 }
                             } else {
@@ -246,6 +255,7 @@ class MainActivity : AppCompatActivity() {
                         audioTrack.write(finalAudioFloats, 0, finalAudioFloats.size, AudioTrack.WRITE_BLOCKING)
 
                     } catch (e: Exception) {
+                        e.printStackTrace()
                         runOnUiThread {
                             progressDialog?.dismiss()
                             Toast.makeText(this@MainActivity, "Error: ${e.message}", Toast.LENGTH_LONG).show()
@@ -449,27 +459,39 @@ class MainActivity : AppCompatActivity() {
             }
 
             var outputBufferIndex = codec.dequeueOutputBuffer(bufferInfo, 10000)
+            if (outputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                if (!isMuxerStarted) {
+                    audioTrackIndex = muxer.addTrack(codec.outputFormat)
+                    muxer.start()
+                    isMuxerStarted = true
+                }
+                outputBufferIndex = codec.dequeueOutputBuffer(bufferInfo, 0)
+            }
+
             while (outputBufferIndex >= 0) {
                 if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) isEOS = true
                 val outputBuffer = codec.getOutputBuffer(outputBufferIndex)!!
+                
                 if (bufferInfo.size > 0 && (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0)) {
-                    outputBuffer.position(bufferInfo.offset)
-                    outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
-                    muxer.writeSampleData(audioTrackIndex, outputBuffer, bufferInfo)
-                } else if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
                     if (!isMuxerStarted) {
                         audioTrackIndex = muxer.addTrack(codec.outputFormat)
                         muxer.start()
                         isMuxerStarted = true
                     }
+                    outputBuffer.position(bufferInfo.offset)
+                    outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
+                    muxer.writeSampleData(audioTrackIndex, outputBuffer, bufferInfo)
                 }
+                
                 codec.releaseOutputBuffer(outputBufferIndex, false)
                 outputBufferIndex = codec.dequeueOutputBuffer(bufferInfo, 0)
             }
         }
         codec.stop()
         codec.release()
-        if (isMuxerStarted) muxer.stop()
+        if (isMuxerStarted) {
+            try { muxer.stop() } catch (e: Exception) { e.printStackTrace() }
+        }
         muxer.release()
         fis.close()
     }

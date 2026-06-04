@@ -72,7 +72,7 @@ class MainActivity : AppCompatActivity() {
             setCancelable(false)
         }
 
-        // 🚀 GitHub Build အတွက် လုံးဝ Offline မော်ဒယ်နှစ်ခုလုံးအား Assets မှ တိုက်ရိုက်နှိုးခြင်း
+        // 🚀 လုံးဝ Offline မော်ဒယ်နှစ်ခုလုံးအား Assets မှ တိုက်ရိုက်နှိုးခြင်း
         thread(start = true) {
             try {
                 ortEnv = OrtEnvironment.getEnvironment()
@@ -82,7 +82,7 @@ class MainActivity : AppCompatActivity() {
                 if (!modelFileMm.exists()) copyAssetToFile("model.onnx", modelFileMm)
                 ortSessionMm = ortEnv?.createSession(modelFileMm.absolutePath)
 
-                // ၂။ အင်္ဂလိပ်မော်ဒယ်အား Assets မှ တိုက်ရိုက်ယူခြင်း (Colab ဖြင့် တင်ထားသော ဖိုင်ကို သုံးမည်)
+                // ၂။ အင်္ဂလိပ်မော်ဒယ်အား Assets မှ ယူခြင်း
                 val modelFileEn = File(cacheDir, "en_model.onnx")
                 if (!modelFileEn.exists()) copyAssetToFile("en_model.onnx", modelFileEn)
                 ortSessionEn = ortEnv?.createSession(modelFileEn.absolutePath)
@@ -128,14 +128,25 @@ class MainActivity : AppCompatActivity() {
                                 if (inputSequence.size < 3) continue
 
                                 val inputShape = longArrayOf(1, inputSequence.size.toLong())
-                                val inputTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(inputSequence), inputShape)
-                                val lengthTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(inputSequence.size.toLong())), longArrayOf(1))
+
+                                // Buffer များ တည်ဆောက်ခြင်း
+                                val longBufferInput = java.nio.LongBuffer.wrap(inputSequence)
+                                val longBufferLength = java.nio.LongBuffer.wrap(longArrayOf(inputSequence.size.toLong()))
+
+                                // 💡 Missing attention_mask Error အား အလိုအလျောက် Tensor တည်ဆောက်၍ ဖြေရှင်းခြင်း
+                                val attentionMaskSequence = LongArray(inputSequence.size) { 1L }
+                                val longBufferMask = java.nio.LongBuffer.wrap(attentionMaskSequence)
+
+                                val inputTensor = OnnxTensor.createTensor(env, longBufferInput, inputShape)
+                                val lengthTensor = OnnxTensor.createTensor(env, longBufferLength, longArrayOf(1))
+                                val maskTensor = OnnxTensor.createTensor(env, longBufferMask, inputShape)
                                 val scalesTensor = OnnxTensor.createTensor(env, java.nio.FloatBuffer.wrap(floatArrayOf(0.667f, 1.0f, 0.8f)), longArrayOf(3))
 
                                 val inputMap = HashMap<String, OnnxTensor>()
                                 ortSessionEn?.inputNames?.forEach { name ->
                                     when {
-                                        name == "input" || name.contains("input_ids") -> inputMap[name] = inputTensor
+                                        name == "input" || name == "input_ids" || name.contains("input_ids") -> inputMap[name] = inputTensor
+                                        name == "attention_mask" || name.contains("attention_mask") -> inputMap[name] = maskTensor
                                         name.contains("input_lengths") || name.contains("lengths") -> inputMap[name] = lengthTensor
                                         name.contains("scales") || name.contains("scale") -> inputMap[name] = scalesTensor
                                     }
@@ -151,6 +162,7 @@ class MainActivity : AppCompatActivity() {
                                 }
                                 inputTensor.close()
                                 lengthTensor.close()
+                                maskTensor.close()
                                 scalesTensor.close()
                                 results?.close()
 
@@ -416,31 +428,4 @@ class MainActivity : AppCompatActivity() {
                 if (bufferInfo.size > 0 && (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0)) {
                     outputBuffer.position(bufferInfo.offset)
                     outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
-                    muxer.writeSampleData(audioTrackIndex, outputBuffer, bufferInfo)
-                } else if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
-                    if (!isMuxerStarted) {
-                        audioTrackIndex = muxer.addTrack(codec.outputFormat)
-                        muxer.start()
-                        isMuxerStarted = true
-                    }
-                }
-                codec.releaseOutputBuffer(outputBufferIndex, false)
-                outputBufferIndex = codec.dequeueOutputBuffer(bufferInfo, 0)
-            }
-        }
-        codec.stop()
-        codec.release()
-        if (isMuxerStarted) muxer.stop()
-        muxer.release()
-        fis.close()
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        mediaPlayer?.release()
-        progressDialog?.dismiss()
-        ortSessionMm?.close()
-        ortSessionEn?.close()
-        ortEnv?.close()
-    }
-}
+                    muxer.writeSampleData(

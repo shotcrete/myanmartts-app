@@ -132,7 +132,7 @@ class MainActivity : AppCompatActivity() {
                                 val longBufferInput = java.nio.LongBuffer.wrap(inputSequence)
                                 val longBufferLength = java.nio.LongBuffer.wrap(longArrayOf(inputSequence.size.toLong()))
 
-                                // 💡 attention_mask အား အလိုအလျောက် Tensor ဆောက်ခြင်း
+                                // 💡 Dynamic Attention Mask Array တည်ဆောက်ခြင်း
                                 val attentionMaskSequence = LongArray(inputSequence.size) { 1L }
                                 val longBufferMask = java.nio.LongBuffer.wrap(attentionMaskSequence)
 
@@ -142,12 +142,23 @@ class MainActivity : AppCompatActivity() {
                                 val scalesTensor = OnnxTensor.createTensor(env, java.nio.FloatBuffer.wrap(floatArrayOf(0.667f, 1.0f, 0.8f)), longArrayOf(3))
 
                                 val inputMap = HashMap<String, OnnxTensor>()
+                                
+                                // 💡 [အဓိကပြင်ဆင်ချက်] မော်ဒယ်ရဲ့ Input Node နာမည်တွေက ဘယ်လိုပဲကွဲကွဲ အော်တိုကွက်တိ Map လုပ်ပေးမည့် စနစ်
                                 ortSessionEn?.inputNames?.forEach { name ->
                                     when {
-                                        name == "input" || name == "input_ids" || name.contains("input_ids") -> inputMap[name] = inputTensor
-                                        name == "attention_mask" || name.contains("attention_mask") -> inputMap[name] = maskTensor
-                                        name.contains("input_lengths") || name.contains("lengths") -> inputMap[name] = lengthTensor
-                                        name.contains("scales") || name.contains("scale") -> inputMap[name] = scalesTensor
+                                        name == "input" || name == "input_ids" || name.contains("input_ids") -> {
+                                            inputMap[name] = inputTensor
+                                        }
+                                        name.contains("length") -> {
+                                            inputMap[name] = lengthTensor
+                                        }
+                                        name.contains("scale") -> {
+                                            inputMap[name] = scalesTensor
+                                        }
+                                        else -> {
+                                            // မော်ဒယ်တောင်းဆိုသမျှ ကျန်ရှိသော Node နာမည်တိုင်းကို attention_mask အဖြစ် သတ်မှတ်ပေးလိုက်ခြင်း
+                                            inputMap[name] = maskTensor
+                                        }
                                     }
                                 }
 

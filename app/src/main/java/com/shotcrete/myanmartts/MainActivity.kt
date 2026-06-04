@@ -21,7 +21,6 @@ import ai.onnxruntime.OnnxTensor
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
-import java.net.URL
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.HashMap
@@ -36,6 +35,7 @@ class MainActivity : AppCompatActivity() {
     private var lastAudioFilePath: String? = null
     private var mediaPlayer: MediaPlayer? = null
 
+    // မြန်မာ Vocab Map
     private val vocabMapMm = mapOf(
         '်' to 0L, 'ာ' to 1L, 'ု' to 2L, 'ိ' to 3L, 'း' to 4L, 'ေ' to 5L, 'သ' to 6L, 'က' to 7L,
         'င' to 8L, 'တ' to 9L, '့' to 10L, 'မ' to 11L, 'ြ' to 12L, 'ည' to 13L, 'ရ' to 14L, 'အ' to 15L,
@@ -47,6 +47,7 @@ class MainActivity : AppCompatActivity() {
         ' ' to 56L
     )
 
+    // အင်္ဂလိပ် Vocab Map (Piper Ryan Low)
     private val vocabMapEn = mapOf(
         '_' to 0L, '^' to 1L, '$' to 2L, ' ' to 3L, '!' to 4L, '\'' to 5L, ',' to 6L, '-' to 7L,
         '.' to 8L, ';' to 9L, '?' to 10L, 'a' to 11L, 'b' to 12L, 'd' to 13L, 'e' to 14L, 'f' to 15L,
@@ -71,7 +72,7 @@ class MainActivity : AppCompatActivity() {
             setCancelable(false)
         }
 
-        // 🚀 Dual Models Initialization with Auto-Download for English Model
+        // 🚀 GitHub Build အတွက် လုံးဝ Offline မော်ဒယ်နှစ်ခုလုံးအား Assets မှ တိုက်ရိုက်နှိုးခြင်း
         thread(start = true) {
             try {
                 ortEnv = OrtEnvironment.getEnvironment()
@@ -81,32 +82,17 @@ class MainActivity : AppCompatActivity() {
                 if (!modelFileMm.exists()) copyAssetToFile("model.onnx", modelFileMm)
                 ortSessionMm = ortEnv?.createSession(modelFileMm.absolutePath)
 
-                // ၂။ အင်္ဂလိပ်မော်ဒယ်အား Cache ထဲတွင် စစ်ဆေးခြင်း (မရှိပါက URL မှ တိုက်ရိုက်ဆွဲခြင်း)
+                // ၂။ အင်္ဂလိပ်မော်ဒယ်အား Assets မှ တိုက်ရိုက်ယူခြင်း (Colab ဖြင့် တင်ထားသော ဖိုင်ကို သုံးမည်)
                 val modelFileEn = File(cacheDir, "en_model.onnx")
-                if (!modelFileEn.exists()) {
-                    runOnUiThread {
-                        Toast.makeText(this@MainActivity, "အင်္ဂလိပ်မော်ဒယ်ဖိုင် (28MB) မရှိသေးသဖြင့် ပထမဆုံးအကြိမ်အဖြစ် ဒေါင်းလုဒ်ဆွဲနေပါသည်... ခဏစောင့်ပေးပါ...", Toast.LENGTH_LONG).show()
-                    }
-                    val url = URL("https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/ryan/low/en_US-ryan-low.onnx")
-                    url.openStream().use { inputStream ->
-                        FileOutputStream(modelFileEn).use { outputStream ->
-                            val buffer = ByteArray(8 * 1024)
-                            var read: Int
-                            while (inputStream.read(buffer).also { read = it } != -1) {
-                                outputStream.write(buffer, 0, read)
-                            }
-                            outputStream.flush()
-                        }
-                    }
-                }
+                if (!modelFileEn.exists()) copyAssetToFile("en_model.onnx", modelFileEn)
                 ortSessionEn = ortEnv?.createSession(modelFileEn.absolutePath)
 
                 runOnUiThread {
-                    Toast.makeText(this@MainActivity, "မြန်မာ + အင်္ဂလိပ် Hybrid TTS အဆင်သင့်ဖြစ်ပါပြီဗျာ", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, "မြန်မာ + အင်္ဂလိပ် Offline Engine အဆင်သင့်ဖြစ်ပါပြီဗျာ", Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
                 runOnUiThread {
-                    Toast.makeText(this@MainActivity, "Engine Error: ${e.message}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this@MainActivity, "Engine Loading Error: ${e.message}", Toast.LENGTH_LONG).show()
                 }
             }
         }

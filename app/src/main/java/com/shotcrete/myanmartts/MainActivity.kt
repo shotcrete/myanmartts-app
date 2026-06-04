@@ -87,8 +87,6 @@ class MainActivity : AppCompatActivity() {
 
                 // ၂။ အင်္ဂလိပ်မော်ဒယ် စစ်ဆေးပြီး ကူးယူခြင်း
                 val modelFileEn = File(cacheDir, "en_model.onnx")
-                
-                // 💡 [ပြင်ဆင်ချက်] JSON ဖိုင်ကို မဟုတ်ဘဲ Assets ထဲက en_model.onnx ဖိုင်အစစ်ကိုသာ စိတ်ချရအောင် တိုက်ရိုက်ကူးယူမည်
                 if (!modelFileEn.exists() || modelFileEn.length() < 10_000_000) {
                     if (modelFileEn.exists()) modelFileEn.delete()
                     copyAssetToFile("en_model.onnx", modelFileEn)
@@ -127,7 +125,6 @@ class MainActivity : AppCompatActivity() {
 
                         for (segment in textSegments) {
                             if (segment.isEnglish) {
-                                // 💡 [ပြင်ဆင်ချက်] အင်္ဂလိပ်မော်ဒယ် အမှန်တကယ် Load ဖြစ်မဖြစ် ဒီနေရာမှာ သေချာစစ်ဆေးမည်
                                 val currentSessionEn = ortSessionEn
                                 if (currentSessionEn != null) {
                                     try {
@@ -154,26 +151,36 @@ class MainActivity : AppCompatActivity() {
 
                                         val inputMap = HashMap<String, OnnxTensor>()
                                         
-                                        // 💡 [ပြင်ဆင်ချက်] Node တွေကို စစ်ဆေးတဲ့အခါ Mask ကို ပထမဆုံး ဦးစားပေးအဆင့်အနေနဲ့ စစ်ထုတ်မည်
+                                        // 💡 [ပိုမိုစိတ်ချရသော Input Mapping စနစ်] နာမည်များကို .contains() ဖြင့် စစ်ထုတ်ပြီး တိကျစွာ Map လုပ်ပေးခြင်း
                                         currentSessionEn.inputNames?.forEach { name ->
+                                            val lowerName = name.lowercase()
                                             when {
-                                                name == "attention_mask" || name.contains("mask") -> {
+                                                lowerName.contains("mask") || lowerName.contains("attention") -> {
                                                     inputMap[name] = maskTensor
                                                 }
-                                                name == "input_lengths" || name == "lengths" || name.contains("length") -> {
-                                                    inputMap[name] = lengthTensor
-                                                }
-                                                name == "scales" || name == "scale" || name.contains("scale") -> {
-                                                    inputMap[name] = scalesTensor
-                                                }
-                                                name == "sid" || name == "speaker_id" || name.contains("sid") -> {
-                                                    inputMap[name] = sidTensor
-                                                }
-                                                name == "input" || name == "input_ids" || name.contains("input") -> {
+                                                lowerName.contains("input_ids") || lowerName.contains("input") || lowerName == "text" -> {
                                                     inputMap[name] = inputTensor
                                                 }
-                                                else -> {
-                                                    inputMap[name] = maskTensor
+                                                lowerName.contains("length") -> {
+                                                    inputMap[name] = lengthTensor
+                                                }
+                                                lowerName.contains("scale") -> {
+                                                    inputMap[name] = scalesTensor
+                                                }
+                                                lowerName.contains("sid") || lowerName.contains("speaker") -> {
+                                                    inputMap[name] = sidTensor
+                                                }
+                                            }
+                                        }
+
+                                        // Node Name လွဲချော်မှုများ ကာကွယ်ရန် နောက်ဆက်တွဲ စစ်ဆေးချက် ထည့်သွင်းခြင်း
+                                        currentSessionEn.inputNames?.forEach { name ->
+                                            if (!inputMap.containsKey(name)) {
+                                                val lowerName = name.lowercase()
+                                                when {
+                                                    lowerName.contains("mask") -> inputMap[name] = maskTensor
+                                                    lowerName.contains("length") -> inputMap[name] = lengthTensor
+                                                    else -> inputMap[name] = maskTensor
                                                 }
                                             }
                                         }
@@ -195,12 +202,10 @@ class MainActivity : AppCompatActivity() {
                                         results?.close()
                                     } catch (e: Exception) {
                                         e.printStackTrace()
-                                        // အင်္ဂလိပ်မော်ဒယ် Run တုန်း Error တက်သွားရင် မြန်မာမော်ဒယ်ဆီ အတင်းမလွှတ်တော့ဘဲ ကျော်သွားမည်
                                     }
                                 } else {
-                                    // အင်္ဂလိပ် Engine Load မဖြစ်ထားပါက User ကို သိရှိအောင် runOnUiThread ဖြင့် အသိပေးနိုင်ပါသည်
                                     runOnUiThread {
-                                        Toast.makeText(this@MainActivity, "အင်္ဂလိပ် Engine အလုပ်မလုပ်သေးပါ (ဖိုင်ဆိုက်စစ်ပါ)", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(this@MainActivity, "အင်္ဂလိပ် Engine အလုပ်မလုပ်သေးပါ", Toast.LENGTH_SHORT).show()
                                     }
                                 }
                             } else {

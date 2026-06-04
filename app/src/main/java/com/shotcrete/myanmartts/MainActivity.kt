@@ -52,7 +52,7 @@ class MainActivity : AppCompatActivity() {
         '_' to 0L, '^' to 1L, '$' to 2L, ' ' to 3L, '!' to 4L, '\'' to 5L, ',' to 6L, '-' to 7L,
         '.' to 8L, ';' to 9L, '?' to 10L, 'a' to 11L, 'b' to 12L, 'd' to 13L, 'e' to 14L, 'f' to 15L,
         'h' to 16L, 'i' to 17L, 'j' to 18L, 'k' to 19L, 'l' to 20L, 'm' to 21L, 'n' to 22L, 'o' to 23L,
-        'p' to 24L, 'r' to 25L, 's' to 26L, 't' to 27L, 'u' to 28L, 'v' to 29, 'w' to 30L, 'z' to 31L,
+        'p' to 24L, 'r' to 25L, 's' to 26L, 't' to 27L, 'u' to 28L, 'v' to 29L, 'w' to 30L, 'z' to 31L,
         'æ' to 32L, 'ç' to 33L, 'ð' to 34L, 'ø' to 35L, 'ŋ' to 36L, 'ɐ' to 37L, 'ɒ' to 38L, 'ɔ' to 39L,
         'ə' to 40L, 'ɛ' to 41L, 'ɜ' to 42L, 'ɪ' to 43L, 'ɫ' to 44L, 'ɱ' to 45L, 'œ' to 46L, 'ɒ' to 47L,
         'ʃ' to 48L, 'θ' to 49L, 'ʊ' to 50L, 'ʌ' to 51L, 'ʒ' to 52L, 'θ' to 53L, 'ː' to 54L, 'ˈ' to 55L,
@@ -129,11 +129,10 @@ class MainActivity : AppCompatActivity() {
 
                                 val inputShape = longArrayOf(1, inputSequence.size.toLong())
 
-                                // Buffer များ တည်ဆောက်ခြင်း
                                 val longBufferInput = java.nio.LongBuffer.wrap(inputSequence)
                                 val longBufferLength = java.nio.LongBuffer.wrap(longArrayOf(inputSequence.size.toLong()))
 
-                                // 💡 Missing attention_mask Error အား အလိုအလျောက် Tensor တည်ဆောက်၍ ဖြေရှင်းခြင်း
+                                // 💡 attention_mask အား အလိုအလျောက် Tensor ဆောက်ခြင်း
                                 val attentionMaskSequence = LongArray(inputSequence.size) { 1L }
                                 val longBufferMask = java.nio.LongBuffer.wrap(attentionMaskSequence)
 
@@ -297,6 +296,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     data class LangSegment(val text: String, val isEnglish: Boolean)
+    
     private fun splitByLanguage(text: String): List<LangSegment> {
         val segments = mutableListOf<LangSegment>()
         val regex = Regex("([a-zA-Z\\s!,.-]+)|([^a-zA-Z]+)")
@@ -428,4 +428,31 @@ class MainActivity : AppCompatActivity() {
                 if (bufferInfo.size > 0 && (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0)) {
                     outputBuffer.position(bufferInfo.offset)
                     outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
-                    muxer.writeSampleData(
+                    muxer.writeSampleData(audioTrackIndex, outputBuffer, bufferInfo)
+                } else if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
+                    if (!isMuxerStarted) {
+                        audioTrackIndex = muxer.addTrack(codec.outputFormat)
+                        muxer.start()
+                        isMuxerStarted = true
+                    }
+                }
+                codec.releaseOutputBuffer(outputBufferIndex, false)
+                outputBufferIndex = codec.dequeueOutputBuffer(bufferInfo, 0)
+            }
+        }
+        codec.stop()
+        codec.release()
+        if (isMuxerStarted) muxer.stop()
+        muxer.release()
+        fis.close()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        mediaPlayer?.release()
+        progressDialog?.dismiss()
+        ortSessionMm?.close()
+        ortSessionEn?.close()
+        ortEnv?.close()
+    }
+}

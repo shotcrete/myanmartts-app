@@ -12,6 +12,7 @@ import android.media.MediaMuxer
 import android.os.Bundle
 import android.os.Environment
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.widget.Button
 import android.widget.EditText
 import android.widget.Toast
@@ -26,6 +27,9 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.HashMap
 import java.util.Locale
+import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
 class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
@@ -54,7 +58,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // Google TextToSpeech စနစ်ကို အင်္ဂလိပ်စာလုံးများအတွက် ကြိုတင် Initialize လုပ်ခြင်း
+        // Google TextToSpeech စနစ်ကို Initialize လုပ်ခြင်း
         googleTts = TextToSpeech(this, this)
 
         val inputText = findViewById<EditText>(R.id.inputText)
@@ -106,13 +110,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
                         for (segment in textSegments) {
                             if (segment.isEnglish) {
-                                // 🚀 [Fix] အင်္ဂလိပ်စာလုံးတွေ့ပါက Google Engine ကိုယ်တိုင် သဘာဝကျကျ အသံထွက်စေခြင်း
                                 if (isGoogleTtsReady) {
-                                    runOnUiThread {
-                                        googleTts?.speak(segment.text, TextToSpeech.QUEUE_ADD, null, "EngSegment")
+                                    val engFloats = generateEnglishAudioFloats(segment.text)
+                                    if (engFloats != null && engFloats.isNotEmpty()) {
+                                        combinedAudioList.add(engFloats)
                                     }
-                                    // အသံထွက်နေစဉ်အတွင်း မြန်မာစကားလုံးနဲ့ ထပ်မထပ်အောင် 2 စက္ကန့်ခန့် Buffer ခံပေးခြင်း
-                                    Thread.sleep(2000) 
                                 }
                             } else {
                                 runMyanmarPipeline(segment.text, env, combinedAudioList)
@@ -124,6 +126,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             return@thread
                         }
 
+                        // အသံလှိုင်း Array များအားလုံးကို တစ်ဆက်တည်းဖြစ်အောင် ပေါင်းစပ်ခြင်း
                         val totalLength = combinedAudioList.sumOf { it.size }
                         val finalAudioFloats = FloatArray(totalLength)
                         var destPos = 0
@@ -132,6 +135,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             destPos += audioChunk.size
                         }
 
+                        // Volume ပမာဏ မျှညှိပေးခြင်း
                         var maxVal = 0.0f
                         for (f in finalAudioFloats) {
                             val absF = if (f < 0) -f else f
@@ -152,6 +156,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                         val tempPcmFile = File(cacheDir, "temp.pcm")
                         saveFloatsToPcm16(tempPcmFile, finalAudioFloats)
 
+                        // 🚀 [Fix] ယခုအခါ ဖိုင်ထဲတွင် အင်္ဂလိပ်ရော မြန်မာပါ တပြိုင်တည်း စနစ်တကျ သိမ်းဆည်းသွားမည်ဖြစ်သည်
                         val outputAacFile = File(myanmarTtsDir, "HYBRID_TTS_${System.currentTimeMillis()}.m4a")
                         convertPcmToAacMuxer(tempPcmFile, outputAacFile, sampleRate)
                         tempPcmFile.delete()
@@ -160,9 +165,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
                         runOnUiThread {
                             progressDialog?.dismiss()
-                            Toast.makeText(this@MainActivity, "Hybrid အသံထွက်လာပါပြီဗျာ", Toast.LENGTH_LONG).show()
+                            Toast.makeText(this@MainActivity, "Hybrid အသံဖိုင် သိမ်းဆည်းပြီးပါပြီဗျာ", Toast.LENGTH_LONG).show()
                         }
 
+                        // စပီကာမှ ပြန်လည်ဖွင့်ပြခြင်း
                         val bufferSize = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_FLOAT)
                         val audioTrack = AudioTrack(
                             AudioManager.STREAM_MUSIC, 
@@ -208,14 +214,68 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
             val result = googleTts?.setLanguage(Locale.US)
-            if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                isGoogleTtsReady = false
-            } else {
-                isGoogleTtsReady = true
-            }
+            isGoogleTtsReady = !(result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED)
         } else {
             isGoogleTtsReady = false
         }
+    }
+
+    // 🚀 [Core Hybrid Fix] Google TTS အသံကို ဖိုင်ထဲသို့တိတ်တဆိတ်ပြောင်းပြီး Wave Float Array အဖြစ် ဆွဲထုတ်သည့်စနစ်
+    private fun generateEnglishAudioFloats(text: String): FloatArray? {
+        val tempWaveFile = File(cacheDir, "temp_eng_${UUID.randomUUID()}.wav")
+        val latch = CountDownLatch(1)
+        
+        googleTts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            override fun onStart(utteranceId: String?) {}
+            override fun onDone(utteranceId: String?) { latch.countDown() }
+            override fun onError(utteranceId: String?) { latch.countDown() }
+        })
+
+        val params = Bundle()
+        params.putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, "EngWave")
+        googleTts?.synthesizeToFile(text, params, tempWaveFile, "EngWave")
+
+        try {
+            latch.await(10, TimeUnit.SECONDS) // အသံပြောင်းလဲပြီးသည်အထိ စက္ကန့်အနည်းငယ် စောင့်ဆိုင်းခြင်း
+            if (tempWaveFile.exists() && tempWaveFile.length() > 44) {
+                val fis = FileInputStream(tempWaveFile)
+                val bytes = tempWaveFile.readBytes()
+                fis.close()
+                tempWaveFile.delete()
+
+                // Wave Header (၄၄ bytes) ကို ကျော်ပြီး PCM 16-bit Short Data များအား Float Array သို့ ပြောင်းလဲခြင်း
+                val pcmByteSize = bytes.size - 44
+                val shortSamples = pcmByteSize / 2
+                val floatArray = FloatArray(shortSamples)
+                
+                val buffer = ByteBuffer.wrap(bytes, 44, pcmByteSize).order(ByteOrder.LITTLE_ENDIAN)
+                for (i in 0 until shortSamples) {
+                    if (buffer.hasRemaining()) {
+                        floatArray[i] = buffer.short / 32768.0f
+                    }
+                }
+                
+                // Google Native TTS သည် ပုံမှန်အားဖြင့် 22050Hz သို့မဟုတ် 24000Hz ထွက်တတ်သဖြင့် လက်ရှိ 16000Hz စနစ်နှင့် ကိုက်ညီအောင် Downsample လုပ်ခြင်း
+                return downsampleTo16k(floatArray, 24000)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return null
+    }
+
+    private fun downsampleTo16k(input: FloatArray, srcSampleRate: Int): FloatArray {
+        if (srcSampleRate == 16000) return input
+        val ratio = srcSampleRate.toDouble() / 16000.0
+        val destLength = (input.size / ratio).toInt()
+        val output = FloatArray(destLength)
+        for (i in 0 until destLength) {
+            val srcIndex = (i * ratio).toInt()
+            if (srcIndex < input.size) {
+                output[i] = input[srcIndex]
+            }
+        }
+        return output
     }
 
     private fun runMyanmarPipeline(text: String, env: OrtEnvironment, combinedAudioList: MutableList<FloatArray>) {

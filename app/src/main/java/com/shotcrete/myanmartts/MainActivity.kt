@@ -35,17 +35,14 @@ class MainActivity : AppCompatActivity() {
     private var lastAudioFilePath: String? = null
     private var mediaPlayer: MediaPlayer? = null
 
-    // 🚀 [Updated Vocab Map] English ONNX (Piper/VITS) အသုံးအများဆုံး အင်္ဂလိပ်စာလုံးနှင့် IPA သင်္ကေတများ ဇယားအပြည့်စုံ
+    // 🚀 [Standard English VITS Vocab] စာလုံးအစစ်များနှင့် Punctuation သက်သက်ပဲ ယူထားတဲ့ ဇယား
     private val vocabMapEn = mapOf(
-        '_' to 0L, '^' to 1L, '$' to 2L, ' ' to 3L, '!' to 4L, '\'' to 5L, ',' to 6L, '-' to 7L,
-        '.' to 8L, ';' to 9L, '?' to 10L, 'a' to 11L, 'b' to 12L, 'c' to 13L, 'd' to 14L, 'e' to 15L,
-        'f' to 16L, 'g' to 17L, 'h' to 18L, 'i' to 19L, 'j' to 20L, 'k' to 21L, 'l' to 22L, 'm' to 23L,
-        'n' to 24L, 'o' to 25L, 'p' to 26L, 'q' to 27L, 'r' to 28L, 's' to 29L, 't' to 30L, 'u' to 31L,
-        'v' to 32L, 'w' to 33L, 'x' to 34L, 'y' to 35L, 'z' to 36L,
-        // IPA Symbols Fallback IDs
-        'æ' to 37L, 'ç' to 38L, 'ð' to 39L, 'ø' to 40L, 'ŋ' to 41L, 'ɐ' to 42L, 'ɒ' to 43L, 'ɔ' to 44L,
-        'ə' to 45L, 'ɛ' to 46L, 'ɜ' to 47L, 'ɪ' to 48L, 'ɫ' to 49L, 'ɱ' to 50L, 'œ' to 51L,
-        'ʃ' to 52L, 'θ' to 53L, 'ʊ' to 54L, 'ʌ' to 55L, 'ʒ' to 56L, 'ː' to 57L, 'ˈ' to 58L, 'ˌ' to 59L
+        ' ' to 1L, '!' to 2L, '\'' to 3L, ',' to 4L, '-' to 5L, '.' to 6L, 
+        ';' to 7L, '?' to 8L, 'a' to 9L, 'b' to 10L, 'c' to 11L, 'd' to 12L, 
+        'e' to 13L, 'f' to 14L, 'g' to 15L, 'h' to 16L, 'i' to 17L, 'j' to 18L, 
+        'k' to 19L, 'l' to 20L, 'm' to 21L, 'n' to 22L, 'o' to 23L, 'p' to 24L, 
+        'q' to 25L, 'r' to 26L, 's' to 27L, 't' to 28L, 'u' to 29L, 'v' to 30L, 
+        'w' to 31L, 'x' to 32L, 'y' to 33L, 'z' to 34L
     )
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -101,19 +98,17 @@ class MainActivity : AppCompatActivity() {
 
                 thread(start = true) {
                     try {
-                        // 🚀 [CRITICAL FIX] စာသားကို စနစ် ၂ မျိုးလုံးကိုက်အောင် ပြင်ဆင်ခြင်း
-                        val processedText = prepareInputText(rawText)
+                        val cleanText = rawText.lowercase(Locale.ROOT)
                         
+                        // 🚀 [CRITICAL FIX] BOS (1L) နှင့် EOS (2L) များကို လုံးဝဖယ်ထုတ်ပြီး Pad (0L) သက်သက်ဖြင့် တည်ဆောက်ခြင်း
                         val tokenList = mutableListOf<Long>()
-                        tokenList.add(1L) // BOS Token (^ သို့မဟုတ် 1)
+                        tokenList.add(0L) // အစမှာ Pad တစ်ခုခံမယ်
                         
-                        // စာလုံးကြားထဲမှာ ပိတ်မသွားအောင် _ (Pad Token - 0L) ခံပြီး ထည့်သွင်းပေးခြင်း (Standard VITS Format)
-                        for (ch in processedText) {
-                            val id = vocabMapEn[ch] ?: 3L // မရှိရင် Space ID ပေးမယ်
+                        for (ch in cleanText) {
+                            val id = vocabMapEn[ch] ?: 1L // မသိတဲ့စာလုံးဆိုရင် Space (1L) ပေးမယ်
                             tokenList.add(id)
-                            tokenList.add(0L) // Interleaved Pad
+                            tokenList.add(0L) // စာလုံးတိုင်းရဲ့ ကြားထဲမှာ Pad (0L) တစ်ခုစီ ပတ်ပတ်စက်စက်ခံမယ်
                         }
-                        tokenList.add(2L) // EOS Token ($ သို့မဟုတ် 2)
 
                         val inputSequence = tokenList.toLongArray()
                         val seqLength = inputSequence.size
@@ -238,28 +233,6 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-    }
-
-    // 💡 Text ကို Model အကြိုက် ပုံစံပြောင်းလဲပေးမယ့် Function
-    private fun prepareInputText(text: String): String {
-        var raw = text.lowercase(Locale.ROOT).trim()
-        
-        // သတ်မှတ်ထားတဲ့ စာလုံးတွေကို IPA Phonemes အဖြစ် အရင်ပြောင်းကြည့်မယ်
-        val g2p = mapOf(
-            "hello" to "həˈloʊ", "hi" to "ˈhaɪ", "ok" to "oʊˈkeɪ", "good" to "ˈɡʊd",
-            "morning" to "ˈmɔːrnɪŋ", "thank" to "ˈθæŋk", "you" to "ˈjuː"
-        )
-        
-        var parsed = raw
-        for ((word, phone) in g2p) {
-            if (raw.contains(word)) {
-                parsed = raw.replace(Regex("\\b$word\\b"), phone)
-                return parsed // Phonemes mapping မိသွားရင် တိုက်ရိုက် သုံးမယ်
-            }
-        }
-        
-        // အကယ်၍ အပေါ်က စာလုံးတွေနဲ့ မကိုက်ညီရင် ရိုးရိုး အင်္ဂလိပ်စာလုံး အက္ခရာတွေကိုပဲ တိုက်ရိုက် Mapping ယူစေမယ် (Fallback)
-        return raw
     }
 
     private fun copyAssetToFile(assetName: String, outFile: File) {

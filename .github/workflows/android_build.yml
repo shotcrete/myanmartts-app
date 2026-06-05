@@ -28,8 +28,8 @@ jobs:
 
     - name: Upload to High-Speed Storage & Send to Telegram
       run: |
-        # transfer.sh ပေါ်ကို APK လှမ်းတင်ပြီး Download Link ယူခြင်း
-        DOWNLOAD_URL=$(curl --upload-file app/build/outputs/apk/debug/app-debug.apk https://transfer.sh/app-debug.apk)
+        # -k သုံးပြီး SSL error ကို ကျော်ကာ bashupload ပေါ် လှမ်းတင်ခြင်း
+        DOWNLOAD_URL=$(curl -k --upload-file app/build/outputs/apk/debug/app-debug.apk https://bashupload.com/app-debug.apk)
         
         # ရလာတဲ့ လင့်ခ်ကို Telegram ထဲ လှမ်းပို့ခြင်း
         curl -F chat_id="${{ secrets.TELEGRAM_TO }}" \

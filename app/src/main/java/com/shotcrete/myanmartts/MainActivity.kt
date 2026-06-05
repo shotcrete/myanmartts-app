@@ -72,12 +72,10 @@ class MainActivity : AppCompatActivity() {
             setCancelable(false)
         }
 
-        // 🚀 Engine Loading စနစ်
         thread(start = true) {
             try {
                 ortEnv = OrtEnvironment.getEnvironment()
                 
-                // ၁။ မြန်မာမော်ဒယ် စစ်ဆေးပြီး ကူးယူခြင်း
                 val modelFileMm = File(cacheDir, "model.onnx")
                 if (!modelFileMm.exists() || modelFileMm.length() < 10_000_000) {
                     if (modelFileMm.exists()) modelFileMm.delete()
@@ -85,7 +83,6 @@ class MainActivity : AppCompatActivity() {
                 }
                 ortSessionMm = ortEnv?.createSession(modelFileMm.absolutePath)
 
-                // ၂။ အင်္ဂလိပ်မော်ဒယ် စစ်ဆေးပြီး ကူးယူခြင်း
                 val modelFileEn = File(cacheDir, "en_model.onnx")
                 if (!modelFileEn.exists() || modelFileEn.length() < 10_000_000) {
                     if (modelFileEn.exists()) modelFileEn.delete()
@@ -146,7 +143,6 @@ class MainActivity : AppCompatActivity() {
                                         
                                         val attentionMaskSequence = LongArray(inputSequence.size) { 1L }
                                         val maskTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(attentionMaskSequence), inputShape)
-                                        
                                         val sidTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(0L)), singleShape)
 
                                         val inputMap = HashMap<String, OnnxTensor>()
@@ -256,10 +252,18 @@ class MainActivity : AppCompatActivity() {
                             Toast.makeText(this@MainActivity, "Hybrid အသံထွက်လာပါပြီဗျာ", Toast.LENGTH_LONG).show()
                         }
 
+                        // 💡 [AudioTrack Playback အဆင့်မြှင့်တင်ခြင်း] Buffer Size အတိအကျဖြင့် တစ်ဆက်တည်း ထွက်စေရန်
                         val bufferSize = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_FLOAT)
-                        val audioTrack = AudioTrack(AudioManager.STREAM_MUSIC, sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_FLOAT, bufferSize, AudioTrack.MODE_STREAM)
-                        audioTrack.play()
+                        val audioTrack = AudioTrack(
+                            AudioManager.STREAM_MUSIC, 
+                            sampleRate, 
+                            AudioFormat.CHANNEL_OUT_MONO, 
+                            AudioFormat.ENCODING_PCM_FLOAT, 
+                            maxOf(bufferSize, finalAudioFloats.size * 4), 
+                            AudioTrack.MODE_STATIC // 🚀 Static Mode ပြောင်းလဲခြင်းဖြင့် အသံအားလုံးကို တစ်ပြိုင်နက် Memory ထဲဆွဲတင်ဖွင့်စေခြင်း
+                        )
                         audioTrack.write(finalAudioFloats, 0, finalAudioFloats.size, AudioTrack.WRITE_BLOCKING)
+                        audioTrack.play()
 
                     } catch (e: Exception) {
                         e.printStackTrace()
@@ -319,14 +323,12 @@ class MainActivity : AppCompatActivity() {
         val lengthTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(inputSequence.size.toLong())), singleShape)
         val scalesTensor = OnnxTensor.createTensor(env, java.nio.FloatBuffer.wrap(floatArrayOf(0.667f, 1.0f, 0.8f)), longArrayOf(3))
         
-        // 💡 [မြန်မာ Pipeline အတွက်ပါ Attention Mask Tensor တည်ဆောက်ခြင်း]
         val attentionMaskSequence = LongArray(inputSequence.size) { 1L }
         val maskTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(attentionMaskSequence), inputShape)
         val sidTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(0L)), singleShape)
 
         val inputMap = HashMap<String, OnnxTensor>()
         
-        // Dynamic Mapping စနစ်ဖြင့် မြန်မာမော်ဒယ်ထဲသို့ပါ Mask သေချာပေါက်ထည့်ပေးခြင်း
         ortSessionMm?.inputNames?.forEach { name ->
             val lowerName = name.lowercase()
             when {
@@ -348,7 +350,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // မဖြစ်မနေလိုအပ်သော Node နာမည်လွဲချော်မှုများ ထပ်မံဖြည့်ဆည်းခြင်း
         ortSessionMm?.inputNames?.forEach { name ->
             if (!inputMap.containsKey(name)) {
                 val lowerName = name.lowercase()
@@ -380,7 +381,8 @@ class MainActivity : AppCompatActivity() {
     
     private fun splitByLanguage(text: String): List<LangSegment> {
         val segments = mutableListOf<LangSegment>()
-        val regex = Regex("([a-zA-Z\\s!,.-]+)|([^a-zA-Z]+)")
+        // 💡 နိုင်ငံခြားစာသား ခွဲထုတ်သည့် စနစ်အား ပိုမိုတိကျအောင် ပြင်ဆင်ခြင်း
+        val regex = Regex("([a-zA-Z0-9\\s!,.'?]+)|([^a-zA-Z0-9]+)")
         val matches = regex.findAll(text)
         
         for (match in matches) {
@@ -399,7 +401,8 @@ class MainActivity : AppCompatActivity() {
             "hello" to "həˈloʊ", "hi" to "ˈhaɪ", "ok" to "oʊˈkeɪ", "good" to "ˈɡʊd",
             "morning" to "ˈmɔːrnɪŋ", "thank" to "ˈθæŋk", "you" to "ˈjuː", "yes" to "ˈjes",
             "no" to "ˈnoʊ", "project" to "ˈprɑːdʒekt", "model" to "ˈmɑːdl", "hybrid" to "ˈhaɪbrɪd",
-            "android" to "ˈændrɔɪd", "system" to "ˈsɪstəm", "file" to "ˈfaɪl", "test" to "ˈtest"
+            "android" to "ˈændrɔɪd", "system" to "ˈsɪstəm", "file" to "ˈfaɪl", "test" to "ˈtest",
+            "what" to "wʌt", "is" to "ɪz", "myanmar" to "mjɑːnˌmɑː"
         )
         for ((word, phone) in g2p) {
             raw = raw.replace(Regex("\\b$word\\b"), phone)
@@ -411,7 +414,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun preProcessMyanmarText(text: String): String {
         var res = text
-        res = res.replace(Regex("[xX._\\-*#+=()_]"), "")
+        // 💡 [ပြင်ဆင်ချက်] "ဗ" အက္ခရာ ပျောက်ဆုံးစေသော Regex ပြဿနာအား ရှင်းလင်းလိုက်ခြင်း
+        res = res.replace(Regex("[xX._*#+=()_\\-]"), "")
         res = res.replace("ဪ", "အော်")
         res = res.replace("၎င်း", "လဂေါင်း")
         res = res.replace("ဖြစ်၏", "ဖြစ်တယ်") 

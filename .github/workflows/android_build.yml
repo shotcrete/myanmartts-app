@@ -27,7 +27,7 @@ jobs:
       run: bash ./gradlew assembleDebug
 
     - name: Upload APK Artifact
-      uses: actions/artifact@v4
+      uses: actions/upload-artifact@v4
       with:
         name: myanmartts-app-debug
         path: app/build/outputs/apk/debug/app-debug.apk

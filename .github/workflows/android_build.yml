@@ -14,46 +14,20 @@ jobs:
       contents: write
 
     steps:
-    - name: Checkout Code with LFS
+    # ၁။ ကုဒ်များကို ဆွဲယူခြင်း (Git Checkout)
+    - name: Checkout Repository
       uses: actions/checkout@v4
       with:
         lfs: true
-    - name: Checkout Repository
-      uses: actions/checkout@v4
 
-    # 🚀 [ဒါဆိုရင် Assets ထဲမှာ အင်္ဂလိပ်မော်ဒယ် ရှိနေရင်တောင် Build မလုပ်ခင် အတင်း အရင်ဆွဲဖျက်ပစ်မှာပါ]
+    # ၂။ 🚀 [Deep Clean] အင်္ဂလိပ်မော်ဒယ်ဖိုင်ကြီး (.onnx ရော .json ရော) ကို အတင်းဆွဲဖျက်ပြီး Gradle ကို ရှင်းထုတ်ခြင်း
     - name: Delete English Model and Clean
       run: |
         rm -f app/src/main/assets/en_model.onnx
-        ./gradlew clean
-            - name: Checkout Repository
-      uses: actions/checkout@v4
-
-    # 🚀 [ဒါဆိုရင် Assets ထဲမှာ အင်္ဂလိပ်မော်ဒယ် ရှိနေရင်တောင် Build မလုပ်ခင် အတင်း အရင်ဆွဲဖျက်ပစ်မှာပါ]
-    - name: Delete English Model and Clean
-      run: |
         rm -f app/src/main/assets/en_model.onnx.json
         ./gradlew clean
 
-    - name: Set up JDK 17
-      uses: actions/setup-java@v4
-      with:
-        java-version: '17'
-        distribution: 'temurin'
-
-    - name: Build with Gradle
-      run: ./gradlew assembleDebug
-
-
-    - name: Set up JDK 17
-      uses: actions/setup-java@v4
-      with:
-        java-version: '17'
-        distribution: 'temurin'
-
-    - name: Build with Gradle
-      run: ./gradlew assembleDebug
-
+    # ၃။ Java System (JDK 17) ကို ပြင်ဆင်ခြင်းနှင့် ပိုမြန်အောင် Cache လုပ်ခြင်း
     - name: Set up JDK 17
       uses: actions/setup-java@v4
       with:
@@ -61,19 +35,22 @@ jobs:
         distribution: 'temurin'
         cache: gradle
 
+    # ၄။ APK ကို စတင် Build လုပ်ခြင်း
     - name: Build with Gradle
       run: bash ./gradlew assembleDebug
 
-    - name: Create Private/Prerelease & Upload APK
+    # ၅။ ထွက်လာတဲ့ APK ကို Private/Prerelease အဖြစ် GitHub Release ထဲ တင်ပေးခြင်း
+    - name: Create Prerelease & Upload APK
       id: create_release
       uses: softprops/action-gh-release@v2
       with:
         tag_name: build-${{ github.run_number }}
         name: Build #${{ github.run_number }}
         draft: false
-        prerelease: true # ပြင်ပလူတွေ သတိမထားမိအောင် Prerelease အဖြစ် ဖျောက်ထားခြင်း
+        prerelease: true
         files: app/build/outputs/apk/debug/app-debug.apk
 
+    # ၆။ GoSpeed ထဲ ထည့်ဒေါင်းနိုင်ဖို့ Telegram ဆီ Direct Link လှမ်းပို့ပေးခြင်း
     - name: Send Direct Link to Telegram
       uses: appleboy/telegram-action@master
       with:
@@ -84,4 +61,3 @@ jobs:
           
           📦 GoSpeed ထဲ ထည့်ဒေါင်းလို့ရမယ့် မြန်နှုန်းမြင့် Direct Download Link:
           https://github.com/${{ github.repository }}/releases/download/build-${{ github.run_number }}/app-debug.apk
-          

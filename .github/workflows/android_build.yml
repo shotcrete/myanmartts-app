@@ -26,16 +26,22 @@ jobs:
     - name: Build with Gradle
       run: bash ./gradlew assembleDebug
 
-    - name: Upload to High-Speed Storage & Send to Telegram
+    - name: Upload to WeTransfer
+      id: wetransfer
       run: |
-        # -k သုံးပြီး SSL error ကို ကျော်ကာ bashupload ပေါ် လှမ်းတင်ခြင်း
-        DOWNLOAD_URL=$(curl -k --upload-file app/build/outputs/apk/debug/app-debug.apk https://bashupload.com/app-debug.apk)
-        
-        # ရလာတဲ့ လင့်ခ်ကို Telegram ထဲ လှမ်းပို့ခြင်း
-        curl -F chat_id="${{ secrets.TELEGRAM_TO }}" \
-             -F text="🎉 Android Build အောင်မြင်သွားပါပြီ!
-             
-        📦 Browser ထဲ ဝင်စရာမလိုဘဲ တန်းနှိပ်ဒေါင်းရန် Direct Link:
-        $DOWNLOAD_URL" \
-             https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage
-             
+        # WeTransfer ရဲ့ အခမဲ့စနစ်ဖြစ်တဲ့ wetransfer_cli ကို သုံးပြီး ဖိုင်တင်ခြင်း
+        curl -fsSL https://raw.githubusercontent.com/Mikubill/transfer/master/install.sh | sh
+        ./transfer wet_base app/build/outputs/apk/debug/app-debug.apk > link.txt
+        echo "WETRANSFER_URL=$(cat link.txt)" >> $GITHUB_ENV
+
+    - name: Send Direct Link to Telegram
+      uses: appleboy/telegram-action@master
+      with:
+        to: ${{ secrets.TELEGRAM_TO }}
+        token: ${{ secrets.TELEGRAM_TOKEN }}
+        message: |
+          🎉 Android Build အောင်မြင်သွားပါပြီ!
+          
+          📦 Browser ထဲ ဝင်စရာမလိုဘဲ တန်းနှိပ်ဒေါင်းရန် မြန်နှုန်းမြင့် Link:
+          ${{ env.WETRANSFER_URL }}
+          

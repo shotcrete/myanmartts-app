@@ -35,7 +35,7 @@ class MainActivity : AppCompatActivity() {
     private var lastAudioFilePath: String? = null
     private var mediaPlayer: MediaPlayer? = null
 
-    // VITS English Model အတွက် Standard Vocab Map (အပိတ်၊ အဖွင့် သင်္ကေတများ အပါအဝင်)
+    // English VITS Standard Vocab Map
     private val vocabMapEn = mapOf(
         '_' to 0L, '^' to 1L, '$' to 2L, ' ' to 3L, '!' to 4L, '\'' to 5L, ',' to 6L, '-' to 7L,
         '.' to 8L, ';' to 9L, '?' to 10L, 'a' to 11L, 'b' to 12L, 'd' to 13L, 'e' to 14L, 'f' to 15L,
@@ -60,7 +60,7 @@ class MainActivity : AppCompatActivity() {
             setCancelable(false)
         }
 
-        // English ONNX Model တစ်ခုတည်းကိုသာ Load ပြုလုပ်ခြင်း
+        // English ONNX Model Loading
         thread(start = true) {
             try {
                 ortEnv = OrtEnvironment.getEnvironment()
@@ -105,47 +105,54 @@ class MainActivity : AppCompatActivity() {
 
                 thread(start = true) {
                     try {
-                        // English စာသား သန့်စင်ပြီး Phonemes ပြောင်းလဲခြင်း
                         val phonemes = textToPhonemes(rawText)
                         
-                        // Token ID တည်ဆောက်ခြင်း
+                        // Token IDs Build လုပ်ခြင်း
                         val tokenList = mutableListOf<Long>()
-                        tokenList.add(1L) // Start Token (^ သို့မဟုတ် Bos)
-                        
+                        tokenList.add(1L) // BOS Token
                         for (ch in phonemes) { 
-                            // 🚀 ဇယားထဲမှာ မရှိခဲ့ရင် Space Token (3L) အစားထိုးပြီး အသံထွက်မပျက်အောင် ထိန်းထားခြင်း
-                            val tokenId = vocabMapEn[ch] ?: 3L 
-                            tokenList.add(tokenId)
+                            tokenList.add(vocabMapEn[ch] ?: 3L) 
                         }
-                        tokenList.add(2L) // End Token ($ သို့မဟုတ် Eos)
+                        tokenList.add(2L) // EOS Token
 
                         val inputSequence = tokenList.toLongArray()
-                        if (inputSequence.size < 3) {
+                        val seqLength = inputSequence.size
+
+                        if (seqLength < 3) {
                             runOnUiThread { progressDialog?.dismiss() }
                             return@thread
                         }
 
-                        val inputShape = longArrayOf(1, inputSequence.size.toLong())
-                        val singleShape = longArrayOf(1)
+                        // 🚀 [CRITICAL FIX] Tensor Shapes များကို အင်္ဂလိပ်မော်ဒယ် မျှော်လင့်ချက်အတိုင်း ပြင်ဆင်ခြင်း
+                        val inputShape = longArrayOf(1, seqLength.toLong()) // [1, T]
+                        val lengthShape = longArrayOf(1) // [1] - Expected Rank 1 အစစ်
 
                         val inputTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(inputSequence), inputShape)
-                        val lengthTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(inputSequence.size.toLong())), singleShape)
+                        
+                        // input_lengths ကို Rank 1 အဖြစ် LongBuffer တိုက်ရိုက်ထုတ်ပေးခြင်း
+                        val lengthTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(seqLength.toLong())), lengthShape)
+                        
+                        // Scales Tensor [3]
                         val scalesTensor = OnnxTensor.createTensor(env, java.nio.FloatBuffer.wrap(floatArrayOf(0.667f, 1.0f, 0.8f)), longArrayOf(3))
                         
-                        val attentionMaskSequence = LongArray(inputSequence.size) { 1L }
+                        // Attention Mask [1, T] ပုံသေဆောက်ခြင်း
+                        val attentionMaskSequence = LongArray(seqLength) { 1L }
                         val maskTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(attentionMaskSequence), inputShape)
-                        val sidTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(0L)), singleShape)
+                        
+                        // Speaker ID [1]
+                        val sidTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(0L)), lengthShape)
 
                         val inputMap = HashMap<String, OnnxTensor>()
                         
+                        // မော်ဒယ်ရဲ့ Input ဥပဒေသများကို စစ်ဆေးပြီး လိုအပ်တာအကုန် ဖြည့်သွင်းခြင်း
                         currentSessionEn.inputNames?.forEach { name ->
                             val lowerName = name.lowercase()
                             when {
                                 lowerName.contains("mask") || lowerName.contains("attention") -> inputMap[name] = maskTensor
-                                lowerName.contains("input_ids") || lowerName.contains("input") || lowerName == "text" -> inputMap[name] = inputTensor
                                 lowerName.contains("length") -> inputMap[name] = lengthTensor
                                 lowerName.contains("scale") -> inputMap[name] = scalesTensor
                                 lowerName.contains("sid") || lowerName.contains("speaker") -> inputMap[name] = sidTensor
+                                lowerName.contains("input_ids") || lowerName.contains("input") || lowerName == "text" -> inputMap[name] = inputTensor
                             }
                         }
 
@@ -159,6 +166,7 @@ class MainActivity : AppCompatActivity() {
                             floatBuffer.get(audioFloats)
                         }
 
+                        // Memory clear လုပ်ခြင်း
                         inputTensor.close()
                         lengthTensor.close()
                         scalesTensor.close()
@@ -175,7 +183,7 @@ class MainActivity : AppCompatActivity() {
                             return@thread
                         }
 
-                        // Audio Volume Normalization
+                        // Audio Normalization
                         var maxVal = 0.0f
                         for (f in finalAudioFloats) {
                             val absF = if (f < 0) -f else f
@@ -204,10 +212,10 @@ class MainActivity : AppCompatActivity() {
 
                         runOnUiThread {
                             progressDialog?.dismiss()
-                            Toast.makeText(this@MainActivity, "English Voice Generated Successfully!", Toast.LENGTH_LONG).show()
+                            Toast.makeText(this@MainActivity, "English Voice Generated!", Toast.LENGTH_LONG).show()
                         }
 
-                        // Playback via Static AudioTrack
+                        // Playback
                         val bufferSize = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_FLOAT)
                         val audioTrack = AudioTrack(
                             AudioManager.STREAM_MUSIC, 
@@ -224,7 +232,7 @@ class MainActivity : AppCompatActivity() {
                         e.printStackTrace()
                         runOnUiThread {
                             progressDialog?.dismiss()
-                            Toast.makeText(this@MainActivity, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+                            Toast.makeText(this@MainActivity, "Run Error: ${e.message}", Toast.LENGTH_LONG).show()
                         }
                     }
                 }
@@ -250,53 +258,24 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // 💡 [အင်္ဂလိပ် သီးသန့် Phonemes စနစ်] ONNX Model အကြိုက်ဆုံး ပုံစံဖြင့် တိုက်ရိုက် Text-to-IPA ပြောင်းလဲခြင်း
     private fun textToPhonemes(text: String): String {
         var raw = text.lowercase(Locale.ROOT).trim()
-        
-        // အခြေခံ အသုံးအများဆုံး စာလုံးများအတွက် တိကျသော VITS Phonemes IPA Dictionary
         val g2p = mapOf(
-            "hello" to "həˈloʊ", 
-            "hi" to "ˈhaɪ", 
-            "ok" to "oʊˈkeɪ", 
-            "good" to "ˈɡʊd",
-            "morning" to "ˈmɔːrnɪŋ", 
-            "thank" to "ˈθæŋk", 
-            "you" to "ˈjuː", 
-            "yes" to "ˈjes",
-            "no" to "ˈnoʊ", 
-            "what" to "wʌt", 
-            "is" to "ɪz", 
-            "myanmar" to "mjɑːnˌmɑː",
-            "project" to "ˈprɑːdʒekt", 
-            "model" to "ˈmɑːdl", 
-            "hybrid" to "ˈhaɪbrɪd",
-            "android" to "ˈændrɔɪd", 
-            "system" to "ˈsɪstəm", 
-            "file" to "ˈfaɪl", 
-            "test" to "ˈtest"
+            "hello" to "həˈloʊ", "hi" to "ˈhaɪ", "ok" to "oʊˈkeɪ", "good" to "ˈɡʊd",
+            "morning" to "ˈmɔːrnɪŋ", "thank" to "ˈθæŋk", "you" to "ˈjuː", "yes" to "ˈjes",
+            "no" to "ˈnoʊ", "what" to "wʌt", "is" to "ɪz", "myanmar" to "mjɑːnˌmɑː"
         )
-        
         for ((word, phone) in g2p) {
             raw = raw.replace(Regex("\\b$word\\b"), phone)
         }
-
-        // Dictionary ထဲမပါသော အက္ခရာများ ကျန်ခဲ့ပါက Vocab Map တွင် ပါဝင်သော IPA သံများသို့ တိုက်ရိုက် mapping ချပေးခြင်း
         val sb = StringBuilder()
         for (ch in raw) {
             if (vocabMapEn.containsKey(ch)) {
                 sb.append(ch)
             } else {
-                // Vocab အသိအမှတ်ပြုသော Standard IPA စာလုံးများသို့ အနီးစပ်ဆုံး ပြောင်းလဲပေးခြင်း
                 val replaced = when (ch) {
-                    'a' -> 'æ'
-                    'e' -> 'ɛ'
-                    'i' -> 'ɪ'
-                    'o' -> 'ɔ'
-                    'u' -> 'ʌ'
-                    'c' -> 'ç'
-                    'g' -> 'ɡ'
-                    else -> ' ' // မသိသော စာလုံးများကို ပိတ်မပစ်ဘဲ space ခြားပေးခြင်း
+                    'a' -> 'æ' 'e' -> 'ɛ' 'i' -> 'ɪ' 'o' -> 'ɔ' 'u' -> 'ʌ' 'c' -> 'ç' 'g' -> 'ɡ'
+                    else -> ' '
                 }
                 sb.append(replaced)
             }

@@ -26,15 +26,14 @@ jobs:
     - name: Build with Gradle
       run: bash ./gradlew assembleDebug
 
-    - name: Upload to WeTransfer
-      id: wetransfer
-      run: |
-        # WeTransfer ရဲ့ အခမဲ့စနစ်ဖြစ်တဲ့ wetransfer_cli ကို သုံးပြီး ဖိုင်တင်ခြင်း
-        curl -fsSL https://raw.githubusercontent.com/Mikubill/transfer/master/install.sh | sh
-        ./transfer wet_base app/build/outputs/apk/debug/app-debug.apk > link.txt
-        echo "WETRANSFER_URL=$(cat link.txt)" >> $GITHUB_ENV
+    - name: Upload APK Artifact
+      id: artifact-upload
+      uses: actions/upload-artifact@v4
+      with:
+        name: myanmartts-app-debug
+        path: app/build/outputs/apk/debug/app-debug.apk
 
-    - name: Send Direct Link to Telegram
+    - name: Send Secure Link to Telegram
       uses: appleboy/telegram-action@master
       with:
         to: ${{ secrets.TELEGRAM_TO }}
@@ -42,6 +41,6 @@ jobs:
         message: |
           🎉 Android Build အောင်မြင်သွားပါပြီ!
           
-          📦 Browser ထဲ ဝင်စရာမလိုဘဲ တန်းနှိပ်ဒေါင်းရန် မြန်နှုန်းမြင့် Link:
-          ${{ env.WETRANSFER_URL }}
+          📦 စိတ်ချရတဲ့ လုံခြုံရေးမြင့် ဒေါင်းလုဒ်လင့်ခ် (Zip ဖိုင်အနေနဲ့ တန်းဒေါင်းပါလိမ့်မယ်):
+          ${{ steps.artifact-upload.outputs.artifact-url }}
           

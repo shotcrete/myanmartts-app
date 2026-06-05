@@ -28,14 +28,14 @@ jobs:
 
     - name: Upload to High-Speed Storage & Send to Telegram
       run: |
-        # ဖိုင်ကို မြန်နှုန်းမြင့် Server ပေါ် တင်ပြီး ဒေါင်းလုဒ်လင့်ခ် ယူခြင်း
-        DOWNLOAD_URL=$(curl --upload-file app/build/outputs/apk/debug/app-debug.apk https://bashupload.com/app-debug.apk)
+        # transfer.sh ပေါ်ကို APK လှမ်းတင်ပြီး Download Link ယူခြင်း
+        DOWNLOAD_URL=$(curl --upload-file app/build/outputs/apk/debug/app-debug.apk https://transfer.sh/app-debug.apk)
         
-        # ရလာတဲ့ လင့်ခ်အစစ်ကို Telegram ထဲ လှမ်းပို့ခြင်း
+        # ရလာတဲ့ လင့်ခ်ကို Telegram ထဲ လှမ်းပို့ခြင်း
         curl -F chat_id="${{ secrets.TELEGRAM_TO }}" \
-             -F text="🎉 Android Build အောင်မြင်သွားပါပြီ! (ဖိုင်ဆိုဒ်ကြီးလို့ အောက်က Direct Link မှာ တန်းနှိပ်ဒေါင်းပါ)
+             -F text="🎉 Android Build အောင်မြင်သွားပါပြီ!
              
-        📦 Direct Download Link:
+        📦 Browser ထဲ ဝင်စရာမလိုဘဲ တန်းနှိပ်ဒေါင်းရန် Direct Link:
         $DOWNLOAD_URL" \
              https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage
              

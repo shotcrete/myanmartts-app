@@ -374,7 +374,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         res = res.replace("ဪ", "အော်")
         res = res.replace("၎င်း", "လဂေါင်း")
         res = res.replace("ဖြစ်၏", "ဖြစ်အီ")
-        res = res.replace("ဗျ", "ဗရ") 
+        res = res.replace("ဗျ", "ဗျ") 
         res = res.replace("၏", "အီး")
         res = res.replace("၌", "နှိုက်")
         res = res.replace("၍", "ရွေ့")

@@ -10,6 +10,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: write
+
     steps:
     - name: Checkout Code with LFS
       uses: actions/checkout@v4
@@ -26,14 +29,17 @@ jobs:
     - name: Build with Gradle
       run: bash ./gradlew assembleDebug
 
-    - name: Upload APK Artifact
-      id: artifact-upload
-      uses: actions/upload-artifact@v4
+    - name: Create Private/Prerelease & Upload APK
+      id: create_release
+      uses: softprops/action-gh-release@v2
       with:
-        name: myanmartts-app-debug
-        path: app/build/outputs/apk/debug/app-debug.apk
+        tag_name: build-${{ github.run_number }}
+        name: Build #${{ github.run_number }}
+        draft: false
+        prerelease: true # ပြင်ပလူတွေ သတိမထားမိအောင် Prerelease အဖြစ် ဖျောက်ထားခြင်း
+        files: app/build/outputs/apk/debug/app-debug.apk
 
-    - name: Send Secure Link to Telegram
+    - name: Send Direct Link to Telegram
       uses: appleboy/telegram-action@master
       with:
         to: ${{ secrets.TELEGRAM_TO }}
@@ -41,6 +47,6 @@ jobs:
         message: |
           🎉 Android Build အောင်မြင်သွားပါပြီ!
           
-          📦 စိတ်ချရတဲ့ လုံခြုံရေးမြင့် ဒေါင်းလုဒ်လင့်ခ် (Zip ဖိုင်အနေနဲ့ တန်းဒေါင်းပါလိမ့်မယ်):
-          ${{ steps.artifact-upload.outputs.artifact-url }}
+          📦 GoSpeed ထဲ ထည့်ဒေါင်းလို့ရမယ့် မြန်နှုန်းမြင့် Direct Download Link:
+          https://github.com/${{ github.repository }}/releases/download/build-${{ github.run_number }}/app-debug.apk
           

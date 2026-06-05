@@ -151,7 +151,6 @@ class MainActivity : AppCompatActivity() {
 
                                         val inputMap = HashMap<String, OnnxTensor>()
                                         
-                                        // 💡 [ပိုမိုစိတ်ချရသော Input Mapping စနစ်] နာမည်များကို .contains() ဖြင့် စစ်ထုတ်ပြီး တိကျစွာ Map လုပ်ပေးခြင်း
                                         currentSessionEn.inputNames?.forEach { name ->
                                             val lowerName = name.lowercase()
                                             when {
@@ -173,7 +172,6 @@ class MainActivity : AppCompatActivity() {
                                             }
                                         }
 
-                                        // Node Name လွဲချော်မှုများ ကာကွယ်ရန် နောက်ဆက်တွဲ စစ်ဆေးချက် ထည့်သွင်းခြင်း
                                         currentSessionEn.inputNames?.forEach { name ->
                                             if (!inputMap.containsKey(name)) {
                                                 val lowerName = name.lowercase()
@@ -315,16 +313,50 @@ class MainActivity : AppCompatActivity() {
         if (inputSequence.isEmpty()) return
 
         val inputShape = longArrayOf(1, inputSequence.size.toLong())
+        val singleShape = longArrayOf(1)
+        
         val inputTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(inputSequence), inputShape)
-        val lengthTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(inputSequence.size.toLong())), longArrayOf(1))
+        val lengthTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(inputSequence.size.toLong())), singleShape)
         val scalesTensor = OnnxTensor.createTensor(env, java.nio.FloatBuffer.wrap(floatArrayOf(0.667f, 1.0f, 0.8f)), longArrayOf(3))
+        
+        // 💡 [မြန်မာ Pipeline အတွက်ပါ Attention Mask Tensor တည်ဆောက်ခြင်း]
+        val attentionMaskSequence = LongArray(inputSequence.size) { 1L }
+        val maskTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(attentionMaskSequence), inputShape)
+        val sidTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(0L)), singleShape)
 
         val inputMap = HashMap<String, OnnxTensor>()
+        
+        // Dynamic Mapping စနစ်ဖြင့် မြန်မာမော်ဒယ်ထဲသို့ပါ Mask သေချာပေါက်ထည့်ပေးခြင်း
         ortSessionMm?.inputNames?.forEach { name ->
+            val lowerName = name.lowercase()
             when {
-                name == "input" || name.contains("input_ids") -> inputMap[name] = inputTensor
-                name.contains("input_lengths") || name.contains("lengths") -> inputMap[name] = lengthTensor
-                name.contains("scales") || name.contains("scale") -> inputMap[name] = scalesTensor
+                lowerName.contains("mask") || lowerName.contains("attention") -> {
+                    inputMap[name] = maskTensor
+                }
+                name == "input" || lowerName.contains("input_ids") || lowerName == "text" -> {
+                    inputMap[name] = inputTensor
+                }
+                lowerName.contains("length") -> {
+                    inputMap[name] = lengthTensor
+                }
+                lowerName.contains("scale") -> {
+                    inputMap[name] = scalesTensor
+                }
+                lowerName.contains("sid") || lowerName.contains("speaker") -> {
+                    inputMap[name] = sidTensor
+                }
+            }
+        }
+
+        // မဖြစ်မနေလိုအပ်သော Node နာမည်လွဲချော်မှုများ ထပ်မံဖြည့်ဆည်းခြင်း
+        ortSessionMm?.inputNames?.forEach { name ->
+            if (!inputMap.containsKey(name)) {
+                val lowerName = name.lowercase()
+                when {
+                    lowerName.contains("mask") -> inputMap[name] = maskTensor
+                    lowerName.contains("length") -> inputMap[name] = lengthTensor
+                    else -> inputMap[name] = maskTensor
+                }
             }
         }
 
@@ -339,6 +371,8 @@ class MainActivity : AppCompatActivity() {
         inputTensor.close()
         lengthTensor.close()
         scalesTensor.close()
+        maskTensor.close()
+        sidTensor.close()
         results?.close()
     }
 

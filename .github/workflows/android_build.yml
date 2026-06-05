@@ -30,3 +30,10 @@ jobs:
         with:
           name: myanmartts-app-debug
           path: app/build/outputs/apk/debug/app-debug.apk
+      - name: Send APK to Telegram
+        uses: appleboy/telegram-action@master
+        with:
+          to: ${{ secrets.TELEGRAM_TO }}
+          token: ${{ secrets.TELEGRAM_TOKEN }}
+          document: app/build/outputs/apk/debug/app-debug.apk
+

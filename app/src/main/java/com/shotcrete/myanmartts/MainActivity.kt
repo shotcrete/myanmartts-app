@@ -29,26 +29,13 @@ import kotlin.concurrent.thread
 
 class MainActivity : AppCompatActivity() {
     private var ortEnv: OrtEnvironment? = null
-    private var ortSessionMm: OrtSession? = null
     private var ortSessionEn: OrtSession? = null
     private var progressDialog: ProgressDialog? = null
     
     private var lastAudioFilePath: String? = null
     private var mediaPlayer: MediaPlayer? = null
 
-    // မြန်မာ Vocab Map
-    private val vocabMapMm = mapOf(
-        '်' to 0L, 'ာ' to 1L, 'ု' to 2L, 'ိ' to 3L, 'း' to 4L, 'ေ' to 5L, 'သ' to 6L, 'က' to 7L,
-        'င' to 8L, 'တ' to 9L, '့' to 10L, 'မ' to 11L, 'ြ' to 12L, 'ည' to 13L, 'ရ' to 14L, 'အ' to 15L,
-        'န' to 16L, 'လ' to 17L, 'ှ' to 18L, 'ပ' to 19L, 'စ' to 20L, 'ခ' to 21L, 'ျ' to 22L, 'ူ' to 23L,
-        'ွ' to 24L, 'ါ' to 25L, 'ထ' to 26L, 'ဖ' to 27L, 'ံ' to 28L, 'ယ' to 29L, 'ဆ' to 30L, 'ီ' to 31L,
-        'ဲ' to 32L, 'ဟ' to 33L, 'ဘ' to 34L, 'ဝ' to 35L, '္' to 36L, 'ဉ' to 37L, 'ဤ' to 38L, 'ဇ' to 39L,
-        'ဒ' to 40L, 'ဂ' to 41L, 'ဦ' to 42L, 'ဏ' to 43L, 'ဗ' to 44L, 'ဓ' to 45L, 'ဧ' to 46L, 'ဥ' to 47L,
-        'ဩ' to 48L, 'ဌ' to 49L, 'ဋ' to 50L, '\'' to 51L, 'ဣ' to 52L, 'ဍ' to 53L, 'ဿ' to 54L, 'ဈ' to 55L,
-        ' ' to 56L
-    )
-
-    // အင်္ဂလိပ် Vocab Map
+    // VITS English Model အတွက် Standard Vocab Map (အပိတ်၊ အဖွင့် သင်္ကေတများ အပါအဝင်)
     private val vocabMapEn = mapOf(
         '_' to 0L, '^' to 1L, '$' to 2L, ' ' to 3L, '!' to 4L, '\'' to 5L, ',' to 6L, '-' to 7L,
         '.' to 8L, ';' to 9L, '?' to 10L, 'a' to 11L, 'b' to 12L, 'd' to 13L, 'e' to 14L, 'f' to 15L,
@@ -69,20 +56,14 @@ class MainActivity : AppCompatActivity() {
         val playLastButton = findViewById<Button>(R.id.playLastButton)
 
         progressDialog = ProgressDialog(this).apply {
-            setMessage("အသံဖိုင်ပြောင်းလဲနေပါသည်... ခဏစောင့်ပါ...")
+            setMessage("English Voice Generating... Please wait...")
             setCancelable(false)
         }
 
+        // English ONNX Model တစ်ခုတည်းကိုသာ Load ပြုလုပ်ခြင်း
         thread(start = true) {
             try {
                 ortEnv = OrtEnvironment.getEnvironment()
-                
-                val modelFileMm = File(cacheDir, "model.onnx")
-                if (!modelFileMm.exists() || modelFileMm.length() < 10_000_000) {
-                    if (modelFileMm.exists()) modelFileMm.delete()
-                    copyAssetToFile("model.onnx", modelFileMm)
-                }
-                ortSessionMm = ortEnv?.createSession(modelFileMm.absolutePath)
 
                 val modelFileEn = File(cacheDir, "en_model.onnx")
                 if (!modelFileEn.exists() || modelFileEn.length() < 10_000_000) {
@@ -95,12 +76,16 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 runOnUiThread {
-                    Toast.makeText(this@MainActivity, "မြန်မာ + အင်္ဂလိပ် Engine အဆင်သင့်ဖြစ်ပါပြီဗျာ", Toast.LENGTH_SHORT).show()
+                    if (ortSessionEn != null) {
+                        Toast.makeText(this@MainActivity, "English Engine Ready!", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(this@MainActivity, "English Model Fail to Load!", Toast.LENGTH_LONG).show()
+                    }
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
                 runOnUiThread {
-                    Toast.makeText(this@MainActivity, "Engine Loading Error: ${e.message}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this@MainActivity, "Loading Error: ${e.message}", Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -109,8 +94,10 @@ class MainActivity : AppCompatActivity() {
             val rawText = inputText.text.toString().trim()
             if (rawText.isNotEmpty()) {
                 val env = ortEnv
-                if (ortSessionMm == null || env == null) {
-                    Toast.makeText(this, "မြန်မာ Engine အဆင်သင့်မဖြစ်သေးပါ...", Toast.LENGTH_SHORT).show()
+                val currentSessionEn = ortSessionEn
+                
+                if (currentSessionEn == null || env == null) {
+                    Toast.makeText(this, "English Engine not ready yet!", Toast.LENGTH_SHORT).show()
                     return@setOnClickListener
                 }
 
@@ -118,90 +105,77 @@ class MainActivity : AppCompatActivity() {
 
                 thread(start = true) {
                     try {
-                        val textSegments = splitByLanguage(rawText)
-                        val combinedAudioList = mutableListOf<FloatArray>()
-
-                        for (segment in textSegments) {
-                            if (segment.isEnglish) {
-                                val currentSessionEn = ortSessionEn
-                                if (currentSessionEn != null) {
-                                    try {
-                                        val phonemes = textToPhonemes(segment.text)
-                                        val tokenList = mutableListOf<Long>()
-                                        tokenList.add(1L) 
-                                        for (ch in phonemes) { 
-                                            tokenList.add(vocabMapEn[ch] ?: 3L) 
-                                        }
-                                        tokenList.add(2L) 
-
-                                        val inputSequence = tokenList.toLongArray()
-                                        if (inputSequence.size < 3) continue
-
-                                        val inputShape = longArrayOf(1, inputSequence.size.toLong())
-                                        val singleShape = longArrayOf(1)
-
-                                        val inputTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(inputSequence), inputShape)
-                                        val lengthTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(inputSequence.size.toLong())), singleShape)
-                                        val scalesTensor = OnnxTensor.createTensor(env, java.nio.FloatBuffer.wrap(floatArrayOf(0.667f, 1.0f, 0.8f)), longArrayOf(3))
-                                        
-                                        val attentionMaskSequence = LongArray(inputSequence.size) { 1L }
-                                        val maskTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(attentionMaskSequence), inputShape)
-                                        val sidTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(0L)), singleShape)
-
-                                        val inputMap = HashMap<String, OnnxTensor>()
-                                        
-                                        currentSessionEn.inputNames?.forEach { name ->
-                                            val lowerName = name.lowercase()
-                                            when {
-                                                lowerName.contains("mask") || lowerName.contains("attention") -> inputMap[name] = maskTensor
-                                                lowerName.contains("input_ids") || lowerName.contains("input") || lowerName == "text" -> inputMap[name] = inputTensor
-                                                lowerName.contains("length") -> inputMap[name] = lengthTensor
-                                                lowerName.contains("scale") -> inputMap[name] = scalesTensor
-                                                lowerName.contains("sid") || lowerName.contains("speaker") -> inputMap[name] = sidTensor
-                                            }
-                                        }
-
-                                        val results = currentSessionEn.run(inputMap)
-                                        val outputTensor = results?.get(0) as? OnnxTensor
-                                        outputTensor?.let {
-                                            val floatBuffer = it.floatBuffer
-                                            val audioFloats = FloatArray(floatBuffer.remaining())
-                                            floatBuffer.get(audioFloats)
-                                            combinedAudioList.add(audioFloats)
-                                        }
-                                        
-                                        inputTensor.close()
-                                        lengthTensor.close()
-                                        scalesTensor.close()
-                                        maskTensor.close()
-                                        sidTensor.close()
-                                        results?.close()
-                                    } catch (e: Exception) {
-                                        e.printStackTrace()
-                                    }
-                                } else {
-                                    runOnUiThread {
-                                        Toast.makeText(this@MainActivity, "အင်္ဂလိပ် Engine အလုပ်မလုပ်သေးပါ", Toast.LENGTH_SHORT).show()
-                                    }
-                                }
-                            } else {
-                                runMyanmarPipeline(segment.text, env, combinedAudioList)
-                            }
+                        // English စာသား သန့်စင်ပြီး Phonemes ပြောင်းလဲခြင်း
+                        val phonemes = textToPhonemes(rawText)
+                        
+                        // Token ID တည်ဆောက်ခြင်း
+                        val tokenList = mutableListOf<Long>()
+                        tokenList.add(1L) // Start Token (^ သို့မဟုတ် Bos)
+                        
+                        for (ch in phonemes) { 
+                            // 🚀 ဇယားထဲမှာ မရှိခဲ့ရင် Space Token (3L) အစားထိုးပြီး အသံထွက်မပျက်အောင် ထိန်းထားခြင်း
+                            val tokenId = vocabMapEn[ch] ?: 3L 
+                            tokenList.add(tokenId)
                         }
+                        tokenList.add(2L) // End Token ($ သို့မဟုတ် Eos)
 
-                        if (combinedAudioList.isEmpty()) {
+                        val inputSequence = tokenList.toLongArray()
+                        if (inputSequence.size < 3) {
                             runOnUiThread { progressDialog?.dismiss() }
                             return@thread
                         }
 
-                        val totalLength = combinedAudioList.sumOf { it.size }
-                        val finalAudioFloats = FloatArray(totalLength)
-                        var destPos = 0
-                        for (audioChunk in combinedAudioList) {
-                            System.arraycopy(audioChunk, 0, finalAudioFloats, destPos, audioChunk.size)
-                            destPos += audioChunk.size
+                        val inputShape = longArrayOf(1, inputSequence.size.toLong())
+                        val singleShape = longArrayOf(1)
+
+                        val inputTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(inputSequence), inputShape)
+                        val lengthTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(inputSequence.size.toLong())), singleShape)
+                        val scalesTensor = OnnxTensor.createTensor(env, java.nio.FloatBuffer.wrap(floatArrayOf(0.667f, 1.0f, 0.8f)), longArrayOf(3))
+                        
+                        val attentionMaskSequence = LongArray(inputSequence.size) { 1L }
+                        val maskTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(attentionMaskSequence), inputShape)
+                        val sidTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(0L)), singleShape)
+
+                        val inputMap = HashMap<String, OnnxTensor>()
+                        
+                        currentSessionEn.inputNames?.forEach { name ->
+                            val lowerName = name.lowercase()
+                            when {
+                                lowerName.contains("mask") || lowerName.contains("attention") -> inputMap[name] = maskTensor
+                                lowerName.contains("input_ids") || lowerName.contains("input") || lowerName == "text" -> inputMap[name] = inputTensor
+                                lowerName.contains("length") -> inputMap[name] = lengthTensor
+                                lowerName.contains("scale") -> inputMap[name] = scalesTensor
+                                lowerName.contains("sid") || lowerName.contains("speaker") -> inputMap[name] = sidTensor
+                            }
                         }
 
+                        val results = currentSessionEn.run(inputMap)
+                        val outputTensor = results?.get(0) as? OnnxTensor
+                        
+                        var audioFloats: FloatArray? = null
+                        outputTensor?.let {
+                            val floatBuffer = it.floatBuffer
+                            audioFloats = FloatArray(floatBuffer.remaining())
+                            floatBuffer.get(audioFloats)
+                        }
+
+                        inputTensor.close()
+                        lengthTensor.close()
+                        scalesTensor.close()
+                        maskTensor.close()
+                        sidTensor.close()
+                        results?.close()
+
+                        val finalAudioFloats = audioFloats
+                        if (finalAudioFloats == null || finalAudioFloats.isEmpty()) {
+                            runOnUiThread {
+                                progressDialog?.dismiss()
+                                Toast.makeText(this@MainActivity, "Model output is empty!", Toast.LENGTH_SHORT).show()
+                            }
+                            return@thread
+                        }
+
+                        // Audio Volume Normalization
                         var maxVal = 0.0f
                         for (f in finalAudioFloats) {
                             val absF = if (f < 0) -f else f
@@ -222,7 +196,7 @@ class MainActivity : AppCompatActivity() {
                         val tempPcmFile = File(cacheDir, "temp.pcm")
                         saveFloatsToPcm16(tempPcmFile, finalAudioFloats)
 
-                        val outputAacFile = File(myanmarTtsDir, "HYBRID_TTS_${System.currentTimeMillis()}.m4a")
+                        val outputAacFile = File(myanmarTtsDir, "ENGLISH_TTS_${System.currentTimeMillis()}.m4a")
                         convertPcmToAacMuxer(tempPcmFile, outputAacFile, sampleRate)
                         tempPcmFile.delete()
 
@@ -230,9 +204,10 @@ class MainActivity : AppCompatActivity() {
 
                         runOnUiThread {
                             progressDialog?.dismiss()
-                            Toast.makeText(this@MainActivity, "Hybrid အသံထွက်လာပါပြီဗျာ", Toast.LENGTH_LONG).show()
+                            Toast.makeText(this@MainActivity, "English Voice Generated Successfully!", Toast.LENGTH_LONG).show()
                         }
 
+                        // Playback via Static AudioTrack
                         val bufferSize = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_FLOAT)
                         val audioTrack = AudioTrack(
                             AudioManager.STREAM_MUSIC, 
@@ -254,7 +229,7 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             } else {
-                Toast.makeText(this, "စာသား အရင်ရိုက်ပေးပါ", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Please enter English text first", Toast.LENGTH_SHORT).show()
             }
         }
 
@@ -275,121 +250,44 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun runMyanmarPipeline(text: String, env: OrtEnvironment, combinedAudioList: MutableList<FloatArray>) {
-        var processedText = preProcessMyanmarText(text)
-        processedText = normalizeNumbers(processedText)
-
-        val cleanChunk = processedText.replace(" ", "")
-        val validChars = cleanChunk.filter { vocabMapMm.containsKey(it) }
-        if (validChars.length < 2) return
-
-        val tokenList = mutableListOf<Long>()
-        tokenList.add(0L)
-        for (i in validChars.indices) {
-            val id = vocabMapMm[validChars[i]] ?: 56L
-            if (id in 0L..56L) {
-                tokenList.add(id)
-                tokenList.add(0L)
-            }
-        }
-
-        val inputSequence = tokenList.toLongArray()
-        if (inputSequence.isEmpty()) return
-
-        val inputShape = longArrayOf(1, inputSequence.size.toLong())
-        val singleShape = longArrayOf(1)
-        
-        val inputTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(inputSequence), inputShape)
-        val lengthTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(inputSequence.size.toLong())), singleShape)
-        val scalesTensor = OnnxTensor.createTensor(env, java.nio.FloatBuffer.wrap(floatArrayOf(0.667f, 1.0f, 0.8f)), longArrayOf(3))
-        
-        val attentionMaskSequence = LongArray(inputSequence.size) { 1L }
-        val maskTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(attentionMaskSequence), inputShape)
-        val sidTensor = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(0L)), singleShape)
-
-        val inputMap = HashMap<String, OnnxTensor>()
-        
-        ortSessionMm?.inputNames?.forEach { name ->
-            val lowerName = name.lowercase()
-            when {
-                lowerName.contains("mask") || lowerName.contains("attention") -> inputMap[name] = maskTensor
-                name == "input" || lowerName.contains("input_ids") || lowerName == "text" -> inputMap[name] = inputTensor
-                lowerName.contains("length") -> inputMap[name] = lengthTensor
-                lowerName.contains("scale") -> inputMap[name] = scalesTensor
-                lowerName.contains("sid") || lowerName.contains("speaker") -> inputMap[name] = sidTensor
-            }
-        }
-
-        val results = ortSessionMm?.run(inputMap)
-        val outputTensor = results?.get(0) as? OnnxTensor
-        outputTensor?.let {
-            val floatBuffer = it.floatBuffer
-            val audioFloats = FloatArray(floatBuffer.remaining())
-            floatBuffer.get(audioFloats)
-            combinedAudioList.add(audioFloats)
-        }
-        inputTensor.close()
-        lengthTensor.close()
-        scalesTensor.close()
-        maskTensor.close()
-        sidTensor.close()
-        results?.close()
-    }
-
-    data class LangSegment(val text: String, val isEnglish: Boolean)
-    
-    private fun splitByLanguage(text: String): List<LangSegment> {
-        val segments = mutableListOf<LangSegment>()
-        if (text.isEmpty()) return segments
-
-        var currentSegment = StringBuilder()
-        var currentIsEnglish: Boolean? = null
-
-        for (ch in text) {
-            val computedIsEnglish = if (ch in " .,!?'-" && currentIsEnglish != null) {
-                currentIsEnglish!! 
-            } else {
-                ch in 'a'..'z' || ch in 'A'..'Z'
-            }
-
-            if (currentIsEnglish == null) {
-                currentIsEnglish = computedIsEnglish
-                currentSegment.append(ch)
-            } else if (currentIsEnglish == computedIsEnglish) {
-                currentSegment.append(ch)
-            } else {
-                if (currentSegment.toString().trim().isNotEmpty()) {
-                    segments.add(LangSegment(currentSegment.toString(), currentIsEnglish!!))
-                }
-                currentSegment = StringBuilder().append(ch)
-                currentIsEnglish = computedIsEnglish
-            }
-        }
-        if (currentSegment.toString().trim().isNotEmpty()) {
-            segments.add(LangSegment(currentSegment.toString(), currentIsEnglish ?: false))
-        }
-        return segments
-    }
-
+    // 💡 [အင်္ဂလိပ် သီးသန့် Phonemes စနစ်] ONNX Model အကြိုက်ဆုံး ပုံစံဖြင့် တိုက်ရိုက် Text-to-IPA ပြောင်းလဲခြင်း
     private fun textToPhonemes(text: String): String {
-        var raw = text.lowercase(Locale.ROOT)
+        var raw = text.lowercase(Locale.ROOT).trim()
+        
+        // အခြေခံ အသုံးအများဆုံး စာလုံးများအတွက် တိကျသော VITS Phonemes IPA Dictionary
         val g2p = mapOf(
-            "hello" to "həˈloʊ", "hi" to "ˈhaɪ", "ok" to "oʊˈkeɪ", "good" to "ˈɡʊd",
-            "morning" to "ˈmɔːrnɪŋ", "thank" to "ˈθæŋk", "you" to "ˈjuː", "yes" to "ˈjes",
-            "no" to "ˈnoʊ", "project" to "ˈprɑːdʒekt", "model" to "ˈmɑːdl", "hybrid" to "ˈhaɪbrɪd",
-            "android" to "ˈændrɔɪd", "system" to "ˈsɪstəm", "file" to "ˈfaɪl", "test" to "ˈtest",
-            "what" to "wʌt", "is" to "ɪz", "myanmar" to "mjɑːnˌmɑː"
+            "hello" to "həˈloʊ", 
+            "hi" to "ˈhaɪ", 
+            "ok" to "oʊˈkeɪ", 
+            "good" to "ˈɡʊd",
+            "morning" to "ˈmɔːrnɪŋ", 
+            "thank" to "ˈθæŋk", 
+            "you" to "ˈjuː", 
+            "yes" to "ˈjes",
+            "no" to "ˈnoʊ", 
+            "what" to "wʌt", 
+            "is" to "ɪz", 
+            "myanmar" to "mjɑːnˌmɑː",
+            "project" to "ˈprɑːdʒekt", 
+            "model" to "ˈmɑːdl", 
+            "hybrid" to "ˈhaɪbrɪd",
+            "android" to "ˈændrɔɪd", 
+            "system" to "ˈsɪstəm", 
+            "file" to "ˈfaɪl", 
+            "test" to "ˈtest"
         )
         
         for ((word, phone) in g2p) {
             raw = raw.replace(Regex("\\b$word\\b"), phone)
         }
 
+        // Dictionary ထဲမပါသော အက္ခရာများ ကျန်ခဲ့ပါက Vocab Map တွင် ပါဝင်သော IPA သံများသို့ တိုက်ရိုက် mapping ချပေးခြင်း
         val sb = StringBuilder()
         for (ch in raw) {
             if (vocabMapEn.containsKey(ch)) {
                 sb.append(ch)
             } else {
+                // Vocab အသိအမှတ်ပြုသော Standard IPA စာလုံးများသို့ အနီးစပ်ဆုံး ပြောင်းလဲပေးခြင်း
                 val replaced = when (ch) {
                     'a' -> 'æ'
                     'e' -> 'ɛ'
@@ -398,40 +296,12 @@ class MainActivity : AppCompatActivity() {
                     'u' -> 'ʌ'
                     'c' -> 'ç'
                     'g' -> 'ɡ'
-                    else -> ' ' 
+                    else -> ' ' // မသိသော စာလုံးများကို ပိတ်မပစ်ဘဲ space ခြားပေးခြင်း
                 }
                 sb.append(replaced)
             }
         }
         return sb.toString()
-    }
-
-    private fun preProcessMyanmarText(text: String): String {
-        var res = text
-        res = res.replace(Regex("[xX._*#+=()_\\-]"), "")
-        res = res.replace("ဪ", "အော်")
-        res = res.replace("၎င်း", "လဂေါင်း")
-        res = res.replace("ဖြစ်၏", "ဖြစ်တယ်") 
-        res = res.replace("၏", "အီး")
-        res = res.replace("၌", "နှိုက်")
-        res = res.replace("၍", "ရွေ့")
-        res = res.replace("ဤ", "အီ")
-        res = res.replace("ဘဏ္ဍာ", "ဘန်ဒါ")
-        res = res.replace("သဏ္ဌာန်", "သန်ထန်")
-        if (!res.endsWith(" ")) res = "$res   "
-        return res
-    }
-
-    private fun normalizeNumbers(text: String): String {
-        var res = text
-        val numMap = mapOf(
-            "0" to "သုည", "1" to "တစ်", "2" to "နှစ်", "3" to "သုံး", "4" to "လေး", "5" to "ငါး",
-            "6" to "ခြောက်", "7" to "ခုနစ်", "8" to "ရှစ်", "9" to "ကိုး",
-            "၀" to "သုည", "၁" to "တစ်", "၂" to "နှစ်", "၃" to "သုံး", "၄" to "လေး", "၅" to "ငါး",
-            "၆" to "ခြောက်", "၇" to "ခုနစ်", "၈" to "ရှစ်", "၉" to "ကိုး"
-        )
-        for ((num, txt) in numMap) { res = res.replace(num, txt) }
-        return res
     }
 
     private fun copyAssetToFile(assetName: String, outFile: File) {
@@ -534,5 +404,13 @@ class MainActivity : AppCompatActivity() {
         }
         muxer.release()
         fis.close()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        mediaPlayer?.release()
+        progressDialog?.dismiss()
+        ortSessionEn?.close()
+        ortEnv?.close()
     }
 }
